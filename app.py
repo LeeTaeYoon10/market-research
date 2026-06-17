@@ -68,49 +68,59 @@ def plan_to_notion():
 @app.route("/search", methods=["POST"])
 def search():
     data = request.get_json()
-    product = (data.get("product") or "").strip()
+    # product 필드 = 내 제품/카테고리(검색 대상 아님, 맥락·노이즈거르기용)
+    category = (data.get("product") or "").strip()
     product_desc = (data.get("product_desc") or "").strip()
     appeal = (data.get("appeal") or "").strip()
+    competitors_in = (data.get("competitors") or "").strip()
     source_keys = data.get("sources") or ["naver_blog", "naver_cafe", "naver_news", "daum"]
     per_source = int(data.get("per_source") or 8)
     deep = bool(data.get("deep"))
     custom_urls = [u.strip() for u in (data.get("custom_urls") or "").splitlines() if u.strip()]
 
-    if not product and not custom_urls:
-        return jsonify({"error": "제품명을 입력하거나 직접 링크를 넣어주세요."}), 400
+    if not appeal and not custom_urls:
+        return jsonify({"error": "소구점을 입력하거나 직접 링크를 넣어주세요. (이 도구는 소구·경쟁사에 대한 소비자 반응을 찾습니다)"}), 400
 
-    # 1) 검색어 확장
-    queries = summarizer.expand_queries(product, appeal, product_desc) if product else []
+    # 1) 소구·경쟁사 중심 검색 설계 (내 제품은 검색하지 않음)
+    plan = summarizer.plan_consumer_search(appeal, category, competitors_in, product_desc) if appeal else \
+        {"competitors": [], "consumer_queries": [], "competitor_queries": []}
+    competitors = plan.get("competitors", [])
+    cq = [d.get("q", "") for d in plan.get("consumer_queries", []) if d.get("q")]
+    kq = [d.get("q", "") for d in plan.get("competitor_queries", []) if d.get("q")]
+    queries = list(dict.fromkeys(cq + kq))  # 소구 소비자언어 + 경쟁사 반응
     # 2) 검색 수집 + 직접 링크 수집
     raw = collector.search(queries, source_keys, per_source=per_source, headless=True) if queries else []
     custom = collector.fetch_custom(custom_urls, headless=True)
     allitems = custom + raw
-    # 3) 요약·관련성 평가
-    results = summarizer.summarize(allitems, product or "(직접 링크)", appeal, product_desc)
+    # 3) 진짜 소비자글 + 소구 관련성 평가
+    results = summarizer.summarize(allitems, appeal, category, competitors)
     # 4) (옵션) 상위 글 본문 깊은 요약
     if deep and summarizer.ai_mode():
-        top = [it for it in results if (it.get("relevance") or 0) >= 4][:6]
+        top = [it for it in results if (it.get("authentic") or 0) >= 4][:6]
         need = [it["url"] for it in top if not it.get("fulltext")]
         ft = collector.fetch_fulltext_many(need, headless=True)
-        summarizer.deep_summarize(top, product, appeal, ft)
+        summarizer.deep_summarize(top, category, appeal, ft)
     # 5) 조사 개요 + 추이
     overview = analytics.build_overview(results, queries)
     trend = analytics.build_trend(results)
 
-    LAST.update(product=product, product_desc=product_desc, appeal=appeal,
+    LAST.update(product=category, product_desc=product_desc, appeal=appeal,
                 results=results, overview=overview, trend=trend)
     return jsonify({"count": len(results), "queries": queries, "results": results,
-                    "overview": overview, "trend": trend})
+                    "overview": overview, "trend": trend,
+                    "competitors": competitors,
+                    "consumer_queries": plan.get("consumer_queries", []),
+                    "competitor_queries": plan.get("competitor_queries", [])})
 
 
 @app.route("/export.csv")
 def export_csv():
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["소스", "제목", "관련성", "소구부합", "발행월", "요약", "심층요약", "링크", "검색어"])
+    w.writerow(["소스", "제목", "소구관련", "진짜소비자", "감성", "발행월", "요약", "심층요약", "링크", "검색어"])
     for it in LAST.get("results", []):
         w.writerow([it.get("source"), it.get("title"), it.get("relevance"),
-                    it.get("appeal_fit"), it.get("date"), it.get("summary"),
+                    it.get("authentic"), it.get("sentiment"), it.get("date"), it.get("summary"),
                     (it.get("deep_summary") or "").replace("\n", " "), it.get("url"), it.get("query")])
     out = "﻿" + buf.getvalue()
     return Response(out, mimetype="text/csv",

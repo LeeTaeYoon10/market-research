@@ -61,23 +61,26 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>시장조사 도구</h1>
-  <div class="sub">제품·소구점을 넣으면 여러 사이트(네이버·다음·디시 등)를 검색해 관련 글의 링크·요약·관련성을 정리합니다.</div>
+  <h1>소구·경쟁사 소비자반응 조사</h1>
+  <div class="sub">내 제품이 아니라 <b>소구점에 대한 진짜 소비자 반응</b>과 <b>경쟁사 제품에 대한 반응</b>을 찾습니다. AI가 소비자 언어로 검색어를 만들고, 광고·체험단 글은 걸러 상위에 진짜 후기를 올립니다.</div>
 
   <div class="card">
+    <label>소구점 (핵심 — 이 욕구·결핍에 소비자가 어떻게 반응하나?)</label>
+    <input type="text" id="appeal" placeholder="예: 간편하지만 건강하게 / 죄책감 없이 빠르게 한 끼">
+
     <div class="row">
       <div>
-        <label>제품 (무엇을 조사할까요?)</label>
-        <input type="text" id="product" placeholder="예: 그래니 샐러드" value="그래니 샐러드">
+        <label>내 제품·카테고리 (검색 안 함, 맥락·노이즈거르기용)</label>
+        <input type="text" id="product" placeholder="예: 간편 샐러드" value="간편 샐러드">
       </div>
       <div>
-        <label>소구점 (어떻게 팔고 싶나요?)</label>
-        <input type="text" id="appeal" placeholder="예: 간편하지만 건강하게">
+        <label>경쟁사 (비우면 AI가 자동 도출 · 쉼표로 구분)</label>
+        <input type="text" id="competitors" placeholder="예: 프레시코드, 샐러디, 편의점샐러드">
       </div>
     </div>
 
-    <label>제품 설명 (어떤 제품인가요? — 자세할수록 전략·분석이 정확해집니다)</label>
-    <textarea id="productDesc" rows="3" placeholder="예: 손질된 채소에 드레싱만 부으면 되는 1인용 간편 샐러드. 다이어트·자취·바쁜 직장인 타겟. 가격 4,900원."></textarea>
+    <label>제품 설명 (선택 — 카테고리·경쟁사 파악 정확도 ↑)</label>
+    <textarea id="productDesc" rows="2" placeholder="예: 손질채소+드레싱 1인용 간편 샐러드. 다이어트·자취·바쁜 직장인 타겟. 4,900원."></textarea>
 
     <button id="planBtn" onclick="plan()" style="background:#7c3aed;">조사 전략 제안받기 (AI 분석)</button>
     <div class="sub" style="margin-top:6px;">소구점·제품설명을 AI가 분석해 어떤 키워드·사이트(국내·해외)를 조사하면 좋을지, 타겟층의 나이대·성격·결핍까지 제안합니다.</div>
@@ -156,7 +159,7 @@
     </div>
     <div id="queries" class="sub"></div>
     <table>
-      <thead><tr><th>소스</th><th>제목·요약</th><th>관련</th><th>소구</th><th>링크</th></tr></thead>
+      <thead><tr><th>소스</th><th>제목·소비자 반응 요약</th><th>소구<br>관련</th><th>진짜<br>소비자</th><th>감성</th><th>링크</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
   </div>
@@ -249,21 +252,22 @@ async function run() {
   const product = document.getElementById('product').value.trim();
   const product_desc = document.getElementById('productDesc').value.trim();
   const appeal = document.getElementById('appeal').value.trim();
+  const competitors = document.getElementById('competitors').value.trim();
   const sources = [...document.querySelectorAll('.src:checked')].map(c => c.value);
   const per_source = document.getElementById('per').value;
   const custom_urls = document.getElementById('custom').value;
   const deep = document.getElementById('deep').checked;
-  if (!product && !custom_urls.trim()) { alert('제품명을 입력하거나 링크를 넣어주세요.'); return; }
+  if (!appeal && !custom_urls.trim()) { alert('소구점을 입력하거나 링크를 넣어주세요.'); return; }
 
   const btn = document.getElementById('run');
   btn.disabled = true; btn.textContent = '검색 중...';
   document.getElementById('status').textContent =
-    '크롬으로 검색·요약 중입니다.' + (deep ? ' 본문 심층 요약은 시간이 더 걸려요.' : '') + ' 30초~3분 소요...';
+    'AI가 소구·경쟁사 검색어를 짜고 크롬으로 소비자 글을 수집·평가 중입니다.' + (deep ? ' 본문 심층 요약은 시간이 더 걸려요.' : '') + ' 1~3분 소요...';
 
   try {
     const res = await fetch('/search', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({product, product_desc, appeal, sources, per_source, custom_urls, deep})
+      body: JSON.stringify({product, product_desc, appeal, competitors, sources, per_source, custom_urls, deep})
     });
     const data = await res.json();
     if (data.error) { document.getElementById('status').textContent = '오류: ' + data.error; return; }
@@ -300,22 +304,35 @@ function renderTrend(t) {
   });
 }
 
+const SENT = {'긍정':['#dcfce7','#166534'],'부정':['#fee2e2','#991b1b'],'중립':['#f3f4f6','#374151'],'혼합':['#fef9c3','#854d0e']};
+function sentTag(s){ const c=SENT[s]; return c?`<span style="background:${c[0]};color:${c[1]};font-size:11px;padding:2px 7px;border-radius:8px;">${s}</span>`:'-'; }
+
 function renderResults(data) {
   document.getElementById('resultCard').style.display = 'block';
-  document.getElementById('resultCount').textContent = '결과 ' + data.count + '건';
-  document.getElementById('queries').textContent =
-    data.queries && data.queries.length ? ('사용한 검색어: ' + data.queries.join(' · ')) : '';
+  document.getElementById('resultCount').textContent = '진짜 소비자 글 ' + data.count + '건 (진짜소비자·소구관련 높은 순)';
+  // 도출된 경쟁사 + 검색어를 보여줌
+  let head = '';
+  if (data.competitors && data.competitors.length)
+    head += '<b>조사한 경쟁사:</b> ' + data.competitors.map(esc).join(' · ') + '<br>';
+  const cq = (data.consumer_queries||[]).map(d=>esc(d.q));
+  const kq = (data.competitor_queries||[]).map(d=>esc(d.q));
+  if (cq.length) head += '<b>소구 소비자언어 검색:</b> ' + cq.join(' · ') + '<br>';
+  if (kq.length) head += '<b>경쟁사 반응 검색:</b> ' + kq.join(' · ');
+  document.getElementById('queries').innerHTML = head;
   const tb = document.getElementById('tbody');
   tb.innerHTML = '';
   for (const it of data.results) {
     const tr = document.createElement('tr');
     const cust = it.source === '직접 추가' ? ' cust' : '';
     const deep = it.deep_summary ? `<div class="deep">${esc(it.deep_summary)}</div>` : '';
+    const auth = it.authentic||'-';
+    const authColor = (auth>=4)?'#166534':(auth<=2&&auth!=='-')?'#991b1b':'#374151';
     tr.innerHTML = `
       <td><span class="tag${cust}">${esc(it.source||'')}</span>${it.date?'<br><span class="sub">'+it.date+'</span>':''}</td>
       <td><b>${esc(it.title||'')}</b><br><span style="color:#4b5563">${esc(it.summary||'')}</span>${deep}</td>
       <td class="score">${it.relevance||'-'}</td>
-      <td class="score">${it.appeal_fit||'-'}</td>
+      <td class="score" style="color:${authColor}">${auth}</td>
+      <td style="text-align:center">${sentTag(it.sentiment)}</td>
       <td><a href="${it.url}" target="_blank">바로가기</a></td>`;
     tb.appendChild(tr);
   }

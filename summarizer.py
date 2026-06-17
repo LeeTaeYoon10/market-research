@@ -8,6 +8,7 @@ AI 호출 통로(둘 중 하나 자동 선택):
 둘 다 없으면 미리보기 텍스트를 그대로 사용.
 """
 import os
+import re
 import json
 import shutil
 import subprocess
@@ -126,18 +127,61 @@ def expand_queries(product, appeal, product_desc=""):
     return base
 
 
-def summarize(items, product, appeal, product_desc=""):
+def plan_consumer_search(appeal, category="", competitors="", product_desc=""):
+    """소구점 중심으로 '진짜 소비자 반응'을 찾기 위한 검색 설계.
+    내 제품이 아니라 (1) 소구에 대한 소비자 언어 (2) 경쟁사 제품 반응을 검색한다.
+    반환 dict: {competitors[], consumer_queries[{q,why}], competitor_queries[{q,why}]} (AI 없으면 규칙기반)."""
+    comp_in = [c.strip() for c in re.split(r"[,\n]", competitors or "") if c.strip()]
+    if ai_mode():
+        prompt = (
+            "너는 소비자 인사이트 리서처다. 우리는 '우리 제품'을 검색하려는 게 아니라, "
+            "아래 '소구점'에 대한 진짜 소비자의 반응·욕구·결핍과, '경쟁사 제품'에 대한 소비자 반응을 찾으려 한다.\n\n"
+            f"소구점(핵심): {appeal}\n"
+            f"제품 카테고리/맥락(검색대상 아님, 노이즈 거르기용): {category or '(미입력)'} {('- ' + product_desc) if product_desc else ''}\n"
+            f"경쟁사(입력됨): {', '.join(comp_in) if comp_in else '(없음 - 네가 직접 도출)'}\n\n"
+            "다음을 만들어라:\n"
+            "1) competitors: 이 카테고리·소구의 대표 경쟁사/대체재 제품·브랜드 5~7개(입력이 있으면 그걸 포함·보완). 우리 제품명은 넣지 마라.\n"
+            "2) consumer_queries: 소구점에 대한 '진짜 소비자'가 커뮤니티·블로그에 쓸 법한 검색어 8개. "
+            "제품명/브랜드명 없이, 감정·상황·결핍·욕구의 소비자 언어로(예: '자취 끼니 귀찮아', '다이어트 작심삼일', '바쁜데 건강하게'). 각 why(왜 이 검색이 소구 반응을 드러내는지).\n"
+            "3) competitor_queries: 경쟁사 제품에 대한 소비자 반응을 찾는 검색어 8개. "
+            "'경쟁사명 + 후기/단점/별로/실망/재구매/맛없' 식으로 솔직한 반응을 노린다. 각 why.\n\n"
+            "반드시 JSON 객체 하나로만(설명 없이, 한국어):\n"
+            '{"competitors":["..."],'
+            '"consumer_queries":[{"q":"...","why":"..."}],'
+            '"competitor_queries":[{"q":"...","why":"..."}]}'
+        )
+        obj = _extract_obj(_ask(prompt, timeout=150))
+        if obj and (obj.get("consumer_queries") or obj.get("competitor_queries")):
+            obj.setdefault("competitors", comp_in)
+            return obj
+    # 폴백(AI 없음): 규칙 기반 최소 검색어
+    cq = [f"{appeal}", f"{appeal} 후기", f"{appeal} 고민", f"{category} 후기".strip(),
+          f"{category} 단점".strip()]
+    kq = [f"{c} 후기" for c in comp_in] + [f"{c} 단점" for c in comp_in]
+    return {
+        "competitors": comp_in,
+        "consumer_queries": [{"q": q, "why": ""} for q in cq if q],
+        "competitor_queries": [{"q": q, "why": ""} for q in kq if q],
+    }
+
+
+def summarize(items, appeal, category="", competitors=None):
     """
-    각 항목에 relevance(1-5), appeal_fit(1-5), summary 추가.
+    각 항목에 relevance(소구 관련성 1-5), authentic(진짜 소비자글 1-5),
+    sentiment(긍/부/중/혼합), summary(소비자가 무엇을 느끼는지) 추가.
     AI 없으면 snippet을 요약으로 사용.
     """
+    competitors = competitors or []
     if not ai_mode():
         for it in items:
             it["relevance"] = ""
-            it["appeal_fit"] = ""
+            it["authentic"] = ""
+            it["appeal_fit"] = ""   # 하위호환
+            it["sentiment"] = ""
             it["summary"] = it.get("snippet", "")[:200]
         return items
 
+    comp_str = ", ".join(competitors) if competitors else "(미지정)"
     BATCH = 10
     out = []
     for i in range(0, len(items), BATCH):
@@ -147,24 +191,30 @@ def summarize(items, product, appeal, product_desc=""):
             for j, it in enumerate(chunk)
         )
         prompt = (
-            f"우리 제품: {product}\n제품 설명: {product_desc or '(없음)'}\n"
-            f"우리가 강조하려는 소구점: {appeal}\n\n"
+            f"우리가 찾는 소구점(소비자 반응 대상): {appeal}\n"
+            f"카테고리/맥락: {category or '(미입력)'}\n경쟁사: {comp_str}\n\n"
+            "우리는 이 소구점에 대한 '진짜 소비자'의 솔직한 글과, 경쟁사 제품에 대한 소비자 반응을 모은다. "
+            "광고·협찬·체험단·기자단·판매홍보·제휴 글은 가짜로 보고 낮게 평가한다.\n\n"
             f"아래 검색결과 각각을 평가해줘:\n{listing}\n\n"
-            "각 항목에 대해 설명 없이 JSON 배열로만 답해. 각 원소는 "
-            '{"i":번호, "relevance":1~5(제품 관련성), "appeal_fit":1~5(소구점 부합도), '
-            '"summary":"핵심 2줄 요약(한국어)"}. 미리보기가 빈약하면 제목 기준으로 판단. '
-            "동음이의어(예: 무관한 가게명·취미글)는 relevance를 1로."
+            "각 항목 설명 없이 JSON 배열로만 답해. 각 원소는 "
+            '{"i":번호, "relevance":1~5(소구점/소비자결핍 관련성), '
+            '"authentic":1~5(진짜 소비자 글일수록 높게; 광고·체험단·판매글은 1~2), '
+            '"sentiment":"긍정|부정|중립|혼합", '
+            '"summary":"이 소비자가 무엇을 느끼고 원하는지/경쟁사에 대해 뭐라는지 2줄(한국어)"}. '
+            "미리보기가 빈약하면 제목 기준 판단. 무관한 동음이의·잡글은 relevance 1."
         )
         arr = _extract_json(_ask(prompt)) or []
         by_i = {d.get("i"): d for d in arr if isinstance(d, dict)}
         for j, it in enumerate(chunk):
             d = by_i.get(j, {})
             it["relevance"] = d.get("relevance", "")
-            it["appeal_fit"] = d.get("appeal_fit", "")
+            it["authentic"] = d.get("authentic", "")
+            it["appeal_fit"] = d.get("authentic", "")  # 하위호환(CSV/리포트 옛 컬럼)
+            it["sentiment"] = d.get("sentiment", "")
             it["summary"] = d.get("summary", it.get("snippet", "")[:200])
             out.append(it)
-    # 관련성 높은 순 정렬
-    out.sort(key=lambda x: ((x.get("relevance") or 0), (x.get("appeal_fit") or 0)), reverse=True)
+    # 진짜 소비자글 + 소구 관련성 높은 순 정렬
+    out.sort(key=lambda x: ((x.get("authentic") or 0) + (x.get("relevance") or 0)), reverse=True)
     return out
 
 

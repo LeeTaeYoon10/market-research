@@ -6,6 +6,7 @@ API 키 없이 동작. 네이버 + 구글 검색을 사용.
 네이버는 CSS 클래스명이 매 빌드마다 랜덤이라, 안정적인 'URL 패턴'으로 결과를 거른다.
 """
 import re
+import json
 import time
 import urllib.parse
 from bs4 import BeautifulSoup
@@ -43,6 +44,11 @@ SOURCES = {
         "url": "https://search.dcinside.com/combine/q/{q}",
         "pattern": None,  # 디시는 전용 파서 사용
     },
+    "youtube": {
+        "name": "유튜브",
+        "url": "https://www.youtube.com/results?search_query={q}",
+        "pattern": None,  # 유튜브는 ytInitialData JSON 파서 사용
+    },
 }
 
 # 결과로 인정하지 않는 잡음 도메인 (광고/검색엔진 내부)
@@ -70,7 +76,11 @@ def _bad_title(title):
 
 def _norm(url):
     """추적 파라미터/앵커 제거해 중복 판정용으로 정규화."""
-    return url.split("#")[0].split("?")[0]
+    base = url.split("#")[0]
+    # 유튜브는 영상ID가 ?v= 쿼리에 있으므로 잘라내면 안 됨(추적 파라미터만 제거)
+    if "youtube.com/watch" in base or "youtu.be/" in base:
+        return base.split("&")[0]
+    return base.split("?")[0]
 
 
 from datetime import datetime, timedelta
@@ -196,6 +206,135 @@ def _parse_dc(html, limit):
     return items
 
 
+def _yt_runs(node):
+    """유튜브 텍스트 노드({runs:[{text}]} 또는 {simpleText}) → 문자열."""
+    if not isinstance(node, dict):
+        return ""
+    if "simpleText" in node:
+        return node["simpleText"]
+    return "".join(r.get("text", "") for r in node.get("runs", []))
+
+
+def _extract_yt_json(html):
+    """ytInitialData = {...} 의 JSON 객체를 중괄호 균형으로 정확히 잘라낸다."""
+    key = "ytInitialData = "
+    i = html.find(key)
+    if i < 0:
+        return None
+    start = html.find("{", i)
+    if start < 0:
+        return None
+    depth, in_str, esc = 0, False, False
+    for j in range(start, len(html)):
+        c = html[j]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        else:
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(html[start:j + 1])
+                    except Exception:
+                        return None
+    return None
+
+
+def collect_youtube(page, limit):
+    """유튜브 검색 결과를 스크롤하며 DOM에서 직접 추출(메타데이터 포함)."""
+    for _ in range(3):
+        try:
+            page.mouse.wheel(0, 3000)
+        except Exception:
+            pass
+        time.sleep(1.2)
+    try:
+        rows = page.evaluate(
+            """() => [...document.querySelectorAll('ytd-video-renderer')].map(r => {
+                const a = r.querySelector('a#video-title');
+                const meta = [...r.querySelectorAll('#metadata-line span')].map(s=>s.innerText).join(' · ');
+                const desc = (r.querySelector('#description-text, .metadata-snippet-text')||{}).innerText || '';
+                const ch = (r.querySelector('#channel-name #text, ytd-channel-name #text')||{}).innerText || '';
+                return a ? {title:(a.getAttribute('title')||a.innerText||'').trim(), href:a.getAttribute('href'), meta, desc, ch} : null;
+            }).filter(Boolean)"""
+        )
+    except Exception:
+        rows = []
+    items, seen = [], set()
+    for r in rows:
+        href = r.get("href") or ""
+        m = re.search(r"/watch\?v=([\w\-]{6,})", href)
+        if not m:
+            continue
+        vid = m.group(1)
+        if vid in seen or not r.get("title"):
+            continue
+        seen.add(vid)
+        snip = _clean(f"{r.get('ch','')} · {r.get('meta','')} {r.get('desc','')}")
+        items.append({
+            "source": SOURCES["youtube"]["name"],
+            "title": r["title"][:120],
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "snippet": snip[:300],
+            "date": extract_date(r.get("meta", "")),
+        })
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _parse_youtube(html, limit):
+    """유튜브 검색 결과: HTML 안의 ytInitialData(JSON)에서 영상 메타를 추출(폴백용)."""
+    data = _extract_yt_json(html)
+    if not data:
+        return []
+    items, seen = [], set()
+
+    def walk(o):
+        if len(items) >= limit:
+            return
+        if isinstance(o, dict):
+            vr = o.get("videoRenderer")
+            if isinstance(vr, dict):
+                vid = vr.get("videoId")
+                title = _yt_runs(vr.get("title", {}))
+                if vid and title and vid not in seen:
+                    seen.add(vid)
+                    channel = _yt_runs(vr.get("ownerText", {}))
+                    views = _yt_runs(vr.get("viewCountText", {}))
+                    when = _yt_runs(vr.get("publishedTimeText", {}))
+                    desc = ""
+                    for sn in vr.get("detailedMetadataSnippets", []) or []:
+                        desc = _yt_runs(sn.get("snippetText", {}))
+                        if desc:
+                            break
+                    snip = _clean(f"{channel} · {views} · {when} {desc}")
+                    items.append({
+                        "source": SOURCES["youtube"]["name"],
+                        "title": title[:120],
+                        "url": f"https://www.youtube.com/watch?v={vid}",
+                        "snippet": snip[:300],
+                        "date": extract_date(when),
+                    })
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(data)
+    return items
+
+
 def _parse_daum(html, limit):
     """다음 통합검색: 외부 사이트(블로그·티스토리·커뮤니티 등) 링크를 일반 추출."""
     soup = BeautifulSoup(html, "lxml")
@@ -253,14 +392,17 @@ def search(queries, source_keys, per_source=8, headless=True):
                 try:
                     wait = "networkidle" if sk == "daum" else "domcontentloaded"
                     page.goto(url, timeout=20000, wait_until=wait)
-                    time.sleep(1.5)  # 동적 로딩 대기
-                    html = page.content()
-                    if sk == "daum":
-                        found = _parse_daum(html, per_source)
-                    elif sk == "dcinside":
-                        found = _parse_dc(html, per_source)
+                    time.sleep(2.5 if sk == "youtube" else 1.5)  # 동적 로딩 대기
+                    if sk == "youtube":
+                        found = collect_youtube(page, per_source)
                     else:
-                        found = _parse_naver(html, sk, per_source)
+                        html = page.content()
+                        if sk == "daum":
+                            found = _parse_daum(html, per_source)
+                        elif sk == "dcinside":
+                            found = _parse_dc(html, per_source)
+                        else:
+                            found = _parse_naver(html, sk, per_source)
                     for it in found:
                         nu = _norm(it["url"])
                         if nu in seen_urls:

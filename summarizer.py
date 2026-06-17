@@ -200,7 +200,8 @@ def summarize(items, appeal, category="", competitors=None):
             '{"i":번호, "relevance":1~5(소구점/소비자결핍 관련성), '
             '"authentic":1~5(진짜 소비자 글일수록 높게; 광고·체험단·판매글은 1~2), '
             '"sentiment":"긍정|부정|중립|혼합", '
-            '"summary":"이 소비자가 무엇을 느끼고 원하는지/경쟁사에 대해 뭐라는지 2줄(한국어)"}. '
+            '"summary":"이 소비자가 무엇을 느끼고 원하는지/경쟁사에 대해 뭐라는지 2줄(한국어)", '
+            '"quotes":["소비자가 실제 쓴 듯한 날것의 표현 0~2개(미리보기에 근거; 꾸미지 말 것). 없으면 빈 배열"]}. '
             "미리보기가 빈약하면 제목 기준 판단. 무관한 동음이의·잡글은 relevance 1."
         )
         arr = _extract_json(_ask(prompt)) or []
@@ -212,10 +213,40 @@ def summarize(items, appeal, category="", competitors=None):
             it["appeal_fit"] = d.get("authentic", "")  # 하위호환(CSV/리포트 옛 컬럼)
             it["sentiment"] = d.get("sentiment", "")
             it["summary"] = d.get("summary", it.get("snippet", "")[:200])
+            it["quotes"] = [str(q) for q in (d.get("quotes") or []) if q][:2]
             out.append(it)
     # 진짜 소비자글 + 소구 관련성 높은 순 정렬
     out.sort(key=lambda x: ((x.get("authentic") or 0) + (x.get("relevance") or 0)), reverse=True)
     return out
+
+
+def build_voc(results, appeal, competitors=None):
+    """수집된 소비자 글 전체에서 VOC(불만 top·욕구 top·자주 쓰는 표현)를 집계.
+    반환 dict 또는 None(AI 없음)."""
+    if not ai_mode() or not results:
+        return None
+    lines = []
+    for it in results[:45]:
+        if (it.get("relevance") or 0) < 2:
+            continue
+        q = " / ".join(it.get("quotes", []) or [])
+        lines.append(f"- [{it.get('sentiment','')}] {it.get('summary','')}"
+                     + (f" (원문: {q})" if q else ""))
+    blob = "\n".join(lines)
+    if not blob:
+        return None
+    prompt = (
+        f"소구점: {appeal}\n경쟁사: {', '.join(competitors) if competitors else '(미지정)'}\n\n"
+        "아래는 이 소구점에 대한 소비자 글·경쟁사 반응의 요약·원문 모음이다:\n"
+        f"{blob}\n\n"
+        "마케터가 소비자 언어를 파악하도록 종합해라. 설명 없이 JSON 객체 하나로만(한국어):\n"
+        '{"complaints":[{"text":"대표 불만/결핍","note":"근거·맥락 한줄"}],'
+        '"desires":[{"text":"소비자가 원하는 것","note":"한줄"}],'
+        '"phrases":["소비자가 자주/인상적으로 쓰는 날것의 표현"],'
+        '"insight":"소구 관점 핵심 시사점 2~3줄"}. '
+        "complaints·desires는 각 4~7개, phrases는 6~12개. 꾸미지 말고 소비자 실제 언어로."
+    )
+    return _extract_obj(_ask(prompt, timeout=150))
 
 
 def deep_summarize(items, product, appeal, fulltext_map):

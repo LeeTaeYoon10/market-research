@@ -100,14 +100,16 @@ def search():
         need = [it["url"] for it in top if not it.get("fulltext")]
         ft = collector.fetch_fulltext_many(need, headless=True)
         summarizer.deep_summarize(top, category, appeal, ft)
-    # 5) 조사 개요 + 추이
+    # 5) 조사 개요 + 추이 + VOC 집계
     overview = analytics.build_overview(results, queries)
     trend = analytics.build_trend(results)
+    voc = summarizer.build_voc(results, appeal, competitors)
 
     LAST.update(product=category, product_desc=product_desc, appeal=appeal,
-                results=results, overview=overview, trend=trend, competitors=competitors)
+                results=results, overview=overview, trend=trend,
+                competitors=competitors, voc=voc)
     return jsonify({"count": len(results), "queries": queries, "results": results,
-                    "overview": overview, "trend": trend,
+                    "overview": overview, "trend": trend, "voc": voc,
                     "competitors": competitors,
                     "consumer_queries": plan.get("consumer_queries", []),
                     "competitor_queries": plan.get("competitor_queries", [])})
@@ -117,10 +119,11 @@ def search():
 def export_csv():
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["소스", "제목", "소구관련", "진짜소비자", "감성", "발행월", "요약", "심층요약", "링크", "검색어"])
+    w.writerow(["소스", "제목", "소구관련", "진짜소비자", "감성", "발행월", "요약", "소비자원문", "심층요약", "링크", "검색어"])
     for it in LAST.get("results", []):
         w.writerow([it.get("source"), it.get("title"), it.get("relevance"),
                     it.get("authentic"), it.get("sentiment"), it.get("date"), it.get("summary"),
+                    " / ".join(it.get("quotes") or []),
                     (it.get("deep_summary") or "").replace("\n", " "), it.get("url"), it.get("query")])
     out = "﻿" + buf.getvalue()
     return Response(out, mimetype="text/csv",

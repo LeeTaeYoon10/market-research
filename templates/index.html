@@ -57,6 +57,17 @@
   .rgn.dom { background:#dcfce7; color:#166534; }
   .rgn.intl { background:#dbeafe; color:#1e40af; }
   .pnote { background:#f9fafb; border-left:3px solid #7c3aed; padding:8px 10px; font-size:13px; color:#374151; }
+  .voc { display:flex; gap:12px; flex-wrap:wrap; }
+  .voc .col { flex:1; min-width:230px; }
+  .voc h4 { margin:0 0 8px; font-size:13px; }
+  .voc .neg h4 { color:#991b1b; } .voc .des h4 { color:#166534; }
+  .voc ul { margin:0; padding-left:18px; }
+  .voc li { font-size:12.5px; margin:4px 0; color:#374151; }
+  .voc li .nt { color:#9ca3af; }
+  .phrases { margin-top:12px; }
+  .ph { display:inline-block; background:#eef2ff; color:#3730a3; border-radius:14px; padding:4px 11px; margin:0 5px 6px 0; font-size:12.5px; }
+  .quote { display:block; border-left:3px solid #cbd5e1; background:#f8fafc; color:#334155; font-size:12px;
+    padding:3px 9px; margin-top:4px; font-style:italic; }
 </style>
 </head>
 <body>
@@ -137,6 +148,17 @@
     <ul class="ov" id="ovList"></ul>
   </div>
 
+  <!-- VOC 집계 -->
+  <div class="card" id="vocCard" style="display:none; border-color:#c7d2fe;">
+    <strong style="color:#3730a3;">소비자의 소리(VOC) 종합 — 불만·욕구·실제 표현</strong>
+    <div id="vocInsight" class="pnote" style="border-left-color:#4f46e5; margin-top:10px;"></div>
+    <div class="voc" style="margin-top:12px;">
+      <div class="col neg"><h4>주요 불만·결핍</h4><ul id="vocComplaints"></ul></div>
+      <div class="col des"><h4>원하는 것(욕구)</h4><ul id="vocDesires"></ul></div>
+    </div>
+    <div class="phrases"><h4 style="font-size:13px;margin:0 0 8px;">소비자가 자주 쓰는 표현</h4><div id="vocPhrases"></div></div>
+  </div>
+
   <!-- 추이 그래프 -->
   <div class="card" id="trendCard" style="display:none;">
     <strong>발행·언급 추이 <span class="sub" id="trendNote"></span></strong>
@@ -158,6 +180,7 @@
       </div>
     </div>
     <div id="queries" class="sub"></div>
+    <label class="chk" style="margin:10px 0 4px;"><input type="checkbox" id="negOnly" onchange="renderRows()"> 부정·불만 글만 보기 (결핍·기회 발굴용)</label>
     <table>
       <thead><tr><th>소스</th><th>제목·소비자 반응 요약</th><th>소구<br>관련</th><th>진짜<br>소비자</th><th>감성</th><th>링크</th></tr></thead>
       <tbody id="tbody"></tbody>
@@ -273,6 +296,7 @@ async function run() {
     if (data.error) { document.getElementById('status').textContent = '오류: ' + data.error; return; }
     document.getElementById('status').textContent = '';
     renderOverview(data.overview);
+    renderVoc(data.voc);
     renderTrend(data.trend);
     renderResults(data);
   } catch (e) {
@@ -307,9 +331,21 @@ function renderTrend(t) {
 const SENT = {'긍정':['#dcfce7','#166534'],'부정':['#fee2e2','#991b1b'],'중립':['#f3f4f6','#374151'],'혼합':['#fef9c3','#854d0e']};
 function sentTag(s){ const c=SENT[s]; return c?`<span style="background:${c[0]};color:${c[1]};font-size:11px;padding:2px 7px;border-radius:8px;">${s}</span>`:'-'; }
 
+let LASTRESULTS = [];
+
+function renderVoc(voc) {
+  const c = document.getElementById('vocCard');
+  if (!voc || (!voc.complaints && !voc.desires && !voc.phrases)) { c.style.display='none'; return; }
+  c.style.display = 'block';
+  document.getElementById('vocInsight').textContent = voc.insight || '';
+  const li = o => `<li>${esc(o.text||'')}${o.note?` <span class="nt">— ${esc(o.note)}</span>`:''}</li>`;
+  document.getElementById('vocComplaints').innerHTML = (voc.complaints||[]).map(li).join('');
+  document.getElementById('vocDesires').innerHTML = (voc.desires||[]).map(li).join('');
+  document.getElementById('vocPhrases').innerHTML = (voc.phrases||[]).map(p=>`<span class="ph">${esc(typeof p==='string'?p:(p.text||''))}</span>`).join('');
+}
+
 function renderResults(data) {
   document.getElementById('resultCard').style.display = 'block';
-  document.getElementById('resultCount').textContent = '진짜 소비자 글 ' + data.count + '건 (진짜소비자·소구관련 높은 순)';
   // 도출된 경쟁사 + 검색어를 보여줌
   let head = '';
   if (data.competitors && data.competitors.length)
@@ -319,17 +355,27 @@ function renderResults(data) {
   if (cq.length) head += '<b>소구 소비자언어 검색:</b> ' + cq.join(' · ') + '<br>';
   if (kq.length) head += '<b>경쟁사 반응 검색:</b> ' + kq.join(' · ');
   document.getElementById('queries').innerHTML = head;
+  LASTRESULTS = data.results || [];
+  renderRows();
+}
+
+function renderRows() {
+  const negOnly = document.getElementById('negOnly').checked;
+  const rows = LASTRESULTS.filter(it => !negOnly || ['부정','혼합'].includes(it.sentiment));
+  document.getElementById('resultCount').textContent =
+    (negOnly ? '부정·불만 ' : '진짜 소비자 글 ') + rows.length + '건' + (negOnly ? ` (전체 ${LASTRESULTS.length})` : ' (진짜소비자·소구관련 높은 순)');
   const tb = document.getElementById('tbody');
   tb.innerHTML = '';
-  for (const it of data.results) {
+  for (const it of rows) {
     const tr = document.createElement('tr');
     const cust = it.source === '직접 추가' ? ' cust' : '';
     const deep = it.deep_summary ? `<div class="deep">${esc(it.deep_summary)}</div>` : '';
+    const quotes = (it.quotes||[]).map(q=>`<span class="quote">“${esc(q)}”</span>`).join('');
     const auth = it.authentic||'-';
     const authColor = (auth>=4)?'#166534':(auth<=2&&auth!=='-')?'#991b1b':'#374151';
     tr.innerHTML = `
       <td><span class="tag${cust}">${esc(it.source||'')}</span>${it.date?'<br><span class="sub">'+it.date+'</span>':''}</td>
-      <td><b>${esc(it.title||'')}</b><br><span style="color:#4b5563">${esc(it.summary||'')}</span>${deep}</td>
+      <td><b>${esc(it.title||'')}</b><br><span style="color:#4b5563">${esc(it.summary||'')}</span>${quotes}${deep}</td>
       <td class="score">${it.relevance||'-'}</td>
       <td class="score" style="color:${authColor}">${auth}</td>
       <td style="text-align:center">${sentTag(it.sentiment)}</td>

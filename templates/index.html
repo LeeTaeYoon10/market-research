@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>시장조사 도구</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Malgun Gothic", sans-serif; background:#f4f5f7; margin:0; color:#1a1a1a; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color:#6b7280; font-size: 13px; margin-bottom: 16px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:20px; margin-bottom:18px; }
+  label { display:block; font-size:13px; font-weight:600; margin:12px 0 6px; }
+  input[type=text], textarea { width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:14px; font-family:inherit; }
+  textarea { resize:vertical; }
+  .sources { display:flex; flex-wrap:wrap; gap:10px; margin-top:6px; }
+  .sources label { display:flex; align-items:center; gap:6px; font-weight:400; margin:0;
+    background:#f3f4f6; padding:7px 12px; border-radius:20px; cursor:pointer; font-size:13px; }
+  .row { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:220px; }
+  button { background:#2563eb; color:#fff; border:0; padding:12px 22px; border-radius:8px;
+    font-size:15px; font-weight:600; cursor:pointer; margin-top:16px; }
+  button:disabled { background:#9ca3af; cursor:wait; }
+  .keynote { font-size:12px; padding:8px 12px; border-radius:8px; margin-top:10px; }
+  .keyon { background:#ecfdf5; color:#065f46; }
+  .keyoff { background:#fffbeb; color:#92400e; }
+  .chk { display:flex; align-items:center; gap:7px; font-weight:400; margin-top:14px; font-size:14px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:10px; border-bottom:1px solid #eee; vertical-align:top; }
+  th { background:#f9fafb; font-size:12px; color:#6b7280; }
+  .tag { display:inline-block; background:#eef2ff; color:#3730a3; font-size:11px; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+  .tag.cust { background:#fef3c7; color:#92400e; }
+  .score { font-weight:700; text-align:center; }
+  a { color:#2563eb; text-decoration:none; word-break:break-all; }
+  a:hover { text-decoration:underline; }
+  #status { margin:14px 0; font-size:14px; color:#374151; }
+  .bar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin:10px 0; }
+  .btn-sm { background:#10b981; padding:8px 14px; font-size:13px; margin:0; color:#fff; border-radius:8px; border:0; cursor:pointer; }
+  .btn-sm.notion { background:#111827; }
+  .ov li { font-size:13px; margin:4px 0; color:#374151; }
+  .deep { background:#f9fafb; border-left:3px solid #2563eb; padding:8px 10px; margin-top:6px; white-space:pre-wrap; font-size:12.5px; color:#374151; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>시장조사 도구</h1>
+  <div class="sub">제품·소구점을 넣으면 여러 사이트(네이버·다음·디시 등)를 검색해 관련 글의 링크·요약·관련성을 정리합니다.</div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>제품 (무엇을 조사할까요?)</label>
+        <input type="text" id="product" placeholder="예: 그래니 샐러드" value="그래니 샐러드">
+      </div>
+      <div>
+        <label>소구점 (어떻게 팔고 싶나요?)</label>
+        <input type="text" id="appeal" placeholder="예: 간편하지만 건강하게">
+      </div>
+    </div>
+
+    <label>검색할 곳</label>
+    <div class="sources">
+      {% for key, s in sources.items() %}
+      <label><input type="checkbox" class="src" value="{{key}}"
+        {% if key in ['naver_blog','naver_cafe','naver_news','daum','dcinside'] %}checked{% endif %}> {{s.name}}</label>
+      {% endfor %}
+    </div>
+
+    <label>직접 추가할 링크 (한 줄에 하나 — 이 글들도 함께 분석합니다)</label>
+    <textarea id="custom" rows="3" placeholder="https://example.com/article1&#10;https://cafe.naver.com/..."></textarea>
+
+    <div class="row">
+      <div>
+        <label>소스별 수집 개수</label>
+        <input type="text" id="per" value="8" style="width:80px;">
+      </div>
+    </div>
+
+    <label class="chk"><input type="checkbox" id="deep"> 상위 글 본문까지 읽어 심층 요약 (느리지만 더 깊음)</label>
+
+    {% if ai_mode == 'cli' %}
+    <div class="keynote keyon">AI 요약·관련성 평가 켜짐 — 클로드 코드 사용 (API 키 불필요)</div>
+    {% elif ai_mode == 'api' %}
+    <div class="keynote keyon">AI 요약·관련성 평가 켜짐 — Anthropic API 사용</div>
+    {% else %}
+    <div class="keynote keyoff">AI 요약 꺼짐 — 미리보기만 표시. 클로드 코드를 설치·로그인하면 자동으로 켜집니다.</div>
+    {% endif %}
+
+    <button id="run" onclick="run()">조사 시작</button>
+  </div>
+
+  <div id="status"></div>
+
+  <!-- 조사 개요 -->
+  <div class="card" id="ovCard" style="display:none;">
+    <strong>조사 개요 — 어디서 어떻게 조사했나</strong>
+    <ul class="ov" id="ovList"></ul>
+  </div>
+
+  <!-- 추이 그래프 -->
+  <div class="card" id="trendCard" style="display:none;">
+    <strong>발행·언급 추이 <span class="sub" id="trendNote"></span></strong>
+    <canvas id="trendChart" height="90"></canvas>
+  </div>
+
+  <!-- 결과 -->
+  <div class="card" id="resultCard" style="display:none;">
+    <div class="bar">
+      <strong id="resultCount"></strong>
+      <div>
+        <a class="btn-sm" href="/export.csv">엑셀(CSV)</a>
+        <a class="btn-sm" href="/report.md">마크다운 리포트</a>
+        {% if notion_ready %}
+        <button class="btn-sm notion" onclick="toNotion()">노션으로 보내기</button>
+        {% else %}
+        <button class="btn-sm notion" onclick="alert('노션 연동은 config.py에 NOTION_TOKEN·NOTION_PARENT를 넣으면 켜집니다. README 참고.')">노션 연동 설정</button>
+        {% endif %}
+      </div>
+    </div>
+    <div id="queries" class="sub"></div>
+    <table>
+      <thead><tr><th>소스</th><th>제목·요약</th><th>관련</th><th>소구</th><th>링크</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let chart = null;
+
+async function run() {
+  const product = document.getElementById('product').value.trim();
+  const appeal = document.getElementById('appeal').value.trim();
+  const sources = [...document.querySelectorAll('.src:checked')].map(c => c.value);
+  const per_source = document.getElementById('per').value;
+  const custom_urls = document.getElementById('custom').value;
+  const deep = document.getElementById('deep').checked;
+  if (!product && !custom_urls.trim()) { alert('제품명을 입력하거나 링크를 넣어주세요.'); return; }
+
+  const btn = document.getElementById('run');
+  btn.disabled = true; btn.textContent = '검색 중...';
+  document.getElementById('status').textContent =
+    '크롬으로 검색·요약 중입니다.' + (deep ? ' 본문 심층 요약은 시간이 더 걸려요.' : '') + ' 30초~3분 소요...';
+
+  try {
+    const res = await fetch('/search', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({product, appeal, sources, per_source, custom_urls, deep})
+    });
+    const data = await res.json();
+    if (data.error) { document.getElementById('status').textContent = '오류: ' + data.error; return; }
+    document.getElementById('status').textContent = '';
+    renderOverview(data.overview);
+    renderTrend(data.trend);
+    renderResults(data);
+  } catch (e) {
+    document.getElementById('status').textContent = '오류: ' + e;
+  } finally {
+    btn.disabled = false; btn.textContent = '조사 시작';
+  }
+}
+
+function renderOverview(ov) {
+  const c = document.getElementById('ovCard'), ul = document.getElementById('ovList');
+  ul.innerHTML = '';
+  (ov||[]).forEach(o => { const li = document.createElement('li'); li.textContent = o.line; ul.appendChild(li); });
+  c.style.display = (ov && ov.length) ? 'block' : 'none';
+}
+
+function renderTrend(t) {
+  const c = document.getElementById('trendCard');
+  if (!t || !t.labels || !t.labels.length) { c.style.display = 'none'; return; }
+  c.style.display = 'block';
+  document.getElementById('trendNote').textContent =
+    `(수집글 발행 기준 · 날짜확인 ${t.dated}/${t.total}건 · 검색량 아님)`;
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: { labels: t.labels, datasets: [{ label: '글 수', data: t.counts,
+      borderColor:'#2563eb', backgroundColor:'rgba(37,99,235,.1)', fill:true, tension:.3 }] },
+    options: { plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, ticks:{precision:0}}} }
+  });
+}
+
+function renderResults(data) {
+  document.getElementById('resultCard').style.display = 'block';
+  document.getElementById('resultCount').textContent = '결과 ' + data.count + '건';
+  document.getElementById('queries').textContent =
+    data.queries && data.queries.length ? ('사용한 검색어: ' + data.queries.join(' · ')) : '';
+  const tb = document.getElementById('tbody');
+  tb.innerHTML = '';
+  for (const it of data.results) {
+    const tr = document.createElement('tr');
+    const cust = it.source === '직접 추가' ? ' cust' : '';
+    const deep = it.deep_summary ? `<div class="deep">${esc(it.deep_summary)}</div>` : '';
+    tr.innerHTML = `
+      <td><span class="tag${cust}">${esc(it.source||'')}</span>${it.date?'<br><span class="sub">'+it.date+'</span>':''}</td>
+      <td><b>${esc(it.title||'')}</b><br><span style="color:#4b5563">${esc(it.summary||'')}</span>${deep}</td>
+      <td class="score">${it.relevance||'-'}</td>
+      <td class="score">${it.appeal_fit||'-'}</td>
+      <td><a href="${it.url}" target="_blank">바로가기</a></td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function esc(s){ return (s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+async function toNotion() {
+  const s = document.getElementById('status');
+  s.textContent = '노션에 페이지 생성 중...';
+  const res = await fetch('/notion', {method:'POST'});
+  const d = await res.json();
+  if (d.ok) { s.innerHTML = '노션 페이지 생성 완료 → <a href="'+d.url+'" target="_blank">열기</a>'; }
+  else { s.textContent = '노션 실패: ' + d.msg; }
+}
+</script>
+</body>
+</html>

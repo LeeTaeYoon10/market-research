@@ -1,0 +1,14 @@
+# 파이썬 가상환경 / 캐시
+.venv/
+__pycache__/
+*.pyc
+
+# 비밀정보 (노션 토큰 등) — 절대 올리지 않음
+config.py
+.env
+
+# 결과/임시 파일
+*.csv
+*.md.tmp
+market_research.*
+server.log

@@ -14,3 +14,5 @@ market_research.*
 server.log
 _server.*
 _plantest.json
+_voctest.json
+browser_profile/

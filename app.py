@@ -11,6 +11,7 @@ import collector
 import summarizer
 import analytics
 import report
+import review_collector
 
 app = Flask(__name__)
 LAST = {}  # 마지막 결과 보관 (CSV/리포트/노션용)
@@ -113,6 +114,47 @@ def search():
                     "competitors": competitors,
                     "consumer_queries": plan.get("consumer_queries", []),
                     "competitor_queries": plan.get("competitor_queries", [])})
+
+
+@app.route("/reviews", methods=["POST"])
+def reviews():
+    """쿠팡·스마트스토어 상품 리뷰를 로그인 크롬(9222)으로 최신순 수집·평가."""
+    data = request.get_json()
+    appeal = (data.get("appeal") or LAST.get("appeal") or "").strip()
+    category = (data.get("product") or LAST.get("product") or "").strip()
+    competitors = LAST.get("competitors", [])
+    review_urls = [u.strip() for u in (data.get("review_urls") or "").splitlines() if u.strip()]
+    per = int(data.get("per_review") or 20)
+    latest_first = data.get("latest_first", True)
+    if not review_urls:
+        return jsonify({"error": "쿠팡·스마트스토어 상품 URL을 넣어주세요."}), 400
+
+    try:
+        raw = review_collector.collect_reviews(review_urls, limit=per, latest_first=latest_first)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
+    if not raw:
+        return jsonify({"error": "리뷰를 가져오지 못했습니다. 로그인 상태·상품 URL을 확인하거나, 쿠팡 봇차단일 수 있어요."}), 200
+
+    # 평가(진짜소비자/감성/인용) + 기존 결과에 합치기
+    evaluated = summarizer.summarize(raw, appeal or "(리뷰)", category, competitors)
+    merged = evaluated + LAST.get("results", [])
+    # url+제목 기준 중복 제거
+    seen, dedup = set(), []
+    for it in merged:
+        k = (it.get("url"), it.get("title"))
+        if k in seen:
+            continue
+        seen.add(k)
+        dedup.append(it)
+    dedup.sort(key=lambda x: ((x.get("authentic") or 0) + (x.get("relevance") or 0)), reverse=True)
+    overview = analytics.build_overview(dedup, [])
+    trend = analytics.build_trend(dedup)
+    voc = summarizer.build_voc(dedup, appeal, competitors)
+    LAST.update(results=dedup, overview=overview, trend=trend, voc=voc)
+    return jsonify({"count": len(dedup), "added": len(evaluated), "results": dedup,
+                    "overview": overview, "trend": trend, "voc": voc,
+                    "competitors": competitors})
 
 
 @app.route("/export.csv")

@@ -12,8 +12,11 @@ if not exist "%CHROME%" (
     exit /b
 )
 
-start "" "%CHROME%" --remote-debugging-port=9222 --user-data-dir="%~dp0browser_profile" https://www.coupang.com https://nid.naver.com/nidlogin.login
-
 echo.
-echo [열림] 이 크롬 창에서 쿠팡과 네이버에 로그인하세요. (창은 그대로 둔 채로 도구에서 '리뷰 수집')
-echo 닫지 마세요. 닫으면 리뷰 수집이 안 됩니다.
+echo [안내] 이 검은 창과 곧 뜨는 크롬 창을 모두 그대로 두세요. (닫으면 리뷰 수집 불가)
+echo 크롬 창에서 쿠팡과 네이버에 로그인한 뒤, 도구에서 '리뷰 수집'을 누르세요.
+echo.
+
+REM start 로 띄우면 기존 크롬에 흡수돼 디버그포트가 안 열린다.
+REM 전용 프로필 + 직접 실행(이 창 유지)으로 별도 인스턴스를 강제한다.
+"%CHROME%" --remote-debugging-port=9222 --user-data-dir="%~dp0browser_profile" https://www.coupang.com https://nid.naver.com/nidlogin.login

@@ -105,7 +105,7 @@ def search():
     trend = analytics.build_trend(results)
 
     LAST.update(product=category, product_desc=product_desc, appeal=appeal,
-                results=results, overview=overview, trend=trend)
+                results=results, overview=overview, trend=trend, competitors=competitors)
     return jsonify({"count": len(results), "queries": queries, "results": results,
                     "overview": overview, "trend": trend,
                     "competitors": competitors,
@@ -131,7 +131,8 @@ def export_csv():
 def report_md():
     md = report.build_markdown(LAST.get("product", ""), LAST.get("appeal", ""),
                                LAST.get("results", []), LAST.get("overview", []),
-                               LAST.get("trend", {"labels": [], "counts": [], "dated": 0, "total": 0}))
+                               LAST.get("trend", {"labels": [], "counts": [], "dated": 0, "total": 0}),
+                               LAST.get("competitors", []))
     return Response(md, mimetype="text/markdown",
                     headers={"Content-Disposition": "attachment; filename=market_research.md"})
 
@@ -142,7 +143,8 @@ def to_notion():
         return jsonify({"ok": False, "msg": "먼저 조사를 실행하세요."})
     res = report.push_to_notion(LAST.get("product", ""), LAST.get("appeal", ""),
                                 LAST.get("results", []), LAST.get("overview", []),
-                                LAST.get("trend", {"labels": [], "counts": [], "dated": 0, "total": 0}))
+                                LAST.get("trend", {"labels": [], "counts": [], "dated": 0, "total": 0}),
+                                LAST.get("competitors", []))
     return jsonify(res)
 
 

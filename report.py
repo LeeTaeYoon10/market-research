@@ -25,14 +25,15 @@ def notion_ready():
     return bool(t and p)
 
 
-def build_markdown(product, appeal, results, overview, trend):
+def build_markdown(product, appeal, results, overview, trend, competitors=None):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    L = [f"# 시장조사 — {product}", "",
-         f"- 소구점: {appeal or '(미입력)'}",
+    L = [f"# 소비자반응 조사 — 소구점「{appeal or '(미입력)'}」", "",
+         f"- 카테고리/맥락: {product or '(미입력)'}",
+         f"- 조사한 경쟁사: {', '.join(competitors) if competitors else '(없음)'}",
          f"- 작성: {now}",
-         f"- 분석한 글: 총 {len(results)}건", ""]
+         f"- 분석한 소비자 글: 총 {len(results)}건", ""]
 
-    L.append("## 조사 개요 (어디서 어떻게 조사했나)")
+    L.append("## 조사 개요 (어떤 검색어로 어디서)")
     for o in overview:
         L.append(f"- {o['line']}")
     L.append("")
@@ -44,14 +45,15 @@ def build_markdown(product, appeal, results, overview, trend):
             L.append(f"  - {lab}: {cnt}건 {'█' * cnt}")
         L.append("")
 
-    L.append("## 분석 결과 (관련성 높은 순)")
+    L.append("## 소비자 반응 (진짜 소비자글 + 소구 관련 높은 순)")
     for it in results:
         rel = it.get("relevance", "")
-        fit = it.get("appeal_fit", "")
-        score = f"관련{rel}/소구{fit}" if rel != "" else ""
+        auth = it.get("authentic", "")
+        sent = it.get("sentiment", "")
+        score = f"소구관련{rel}/진짜소비자{auth}" + (f"/{sent}" if sent else "") if rel != "" else ""
         L.append(f"### [{it['source']}] {it['title']}  {score}")
         if it.get("summary"):
-            L.append(f"- 요약: {it['summary']}")
+            L.append(f"- 소비자 반응: {it['summary']}")
         if it.get("deep_summary"):
             L.append(f"- 심층:\n{_indent(it['deep_summary'])}")
         L.append(f"- 링크: {it['url']}")
@@ -82,7 +84,7 @@ def _rt(text):
     return [{"type": "text", "text": {"content": (text or "")[:1900]}}]
 
 
-def _blocks(product, appeal, results, overview, trend):
+def _blocks(product, appeal, results, overview, trend, competitors=None):
     b = []
 
     def h2(t): b.append({"object": "block", "type": "heading_2",
@@ -97,37 +99,39 @@ def _blocks(product, appeal, results, overview, trend):
     def bullet(t): b.append({"object": "block", "type": "bulleted_list_item",
                             "bulleted_list_item": {"rich_text": _rt(t)}})
 
-    para(f"소구점: {appeal or '(미입력)'} · 분석 {len(results)}건 · {datetime.now():%Y-%m-%d %H:%M}")
-    h2("조사 개요 (어디서 어떻게 조사했나)")
+    para(f"소구점: {appeal or '(미입력)'} · 카테고리: {product or '-'} · 분석 {len(results)}건 · {datetime.now():%Y-%m-%d %H:%M}")
+    if competitors:
+        para("조사한 경쟁사: " + ", ".join(competitors))
+    h2("조사 개요 (어떤 검색어로 어디서)")
     for o in overview:
         bullet(o["line"])
     if trend["labels"]:
         h2(f"발행/언급 추이 (날짜확인 {trend['dated']}/{trend['total']}건)")
         for lab, cnt in zip(trend["labels"], trend["counts"]):
             bullet(f"{lab}: {cnt}건 {'█'*cnt}")
-    h2("분석 결과 (관련성 높은 순)")
+    h2("소비자 반응 (진짜 소비자글 + 소구 관련 높은 순)")
     for it in results[:40]:   # 노션 블록 수 제한 고려
-        rel, fit = it.get("relevance", ""), it.get("appeal_fit", "")
-        score = f"  (관련{rel}/소구{fit})" if rel != "" else ""
+        rel, auth, sent = it.get("relevance", ""), it.get("authentic", ""), it.get("sentiment", "")
+        score = f"  (소구관련{rel}/진짜소비자{auth}{('/'+sent) if sent else ''})" if rel != "" else ""
         h3(f"[{it['source']}] {it['title']}{score}")
         if it.get("summary"):
-            bullet("요약: " + it["summary"])
+            bullet("소비자 반응: " + it["summary"])
         if it.get("deep_summary"):
             bullet("심층: " + it["deep_summary"].replace("\n", " "))
         bullet("링크: " + it["url"])
     return b
 
 
-def push_to_notion(product, appeal, results, overview, trend):
+def push_to_notion(product, appeal, results, overview, trend, competitors=None):
     """노션에 페이지 생성. 성공 시 URL 반환, 실패 시 예외 메시지 문자열."""
     token, parent = _notion_cfg()
     if not (token and parent):
         return {"ok": False, "msg": "노션 토큰/부모페이지가 설정되지 않음"}
-    title = f"시장조사 — {product} ({datetime.now():%m/%d})"
+    title = f"소비자반응 조사 — 「{appeal or product}」 ({datetime.now():%m/%d})"
     payload = {
         "parent": {"page_id": parent},
         "properties": {"title": {"title": _rt(title)}},
-        "children": _blocks(product, appeal, results, overview, trend)[:100],
+        "children": _blocks(product, appeal, results, overview, trend, competitors)[:100],
     }
     try:
         res = _nreq("pages", payload, token)

@@ -134,3 +134,75 @@ def push_to_notion(product, appeal, results, overview, trend):
         return {"ok": True, "url": res.get("url", ""), "id": res.get("id", "")}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
+
+
+# ---------- 조사 전략 → 노션 ----------
+def build_strategy_markdown(product, appeal, strat):
+    """전략 제안을 마크다운으로."""
+    t = (strat or {}).get("target", {}) or {}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    L = [f"# 조사 전략 — {product}", "",
+         f"- 소구점: {appeal or '(미입력)'}", f"- 작성: {now}", "",
+         "## 이 제품은", strat.get("product_understanding", ""), "",
+         "## 핵심 타겟층",
+         f"- 나이대: {t.get('age','')}",
+         f"- 성격·라이프스타일: {t.get('personality','')}",
+         f"- 결핍·니즈: {t.get('needs','')}", "",
+         "## 추천 키워드"]
+    for k in strat.get("keywords", []):
+        L.append(f"- **{k.get('keyword','')}** — {k.get('reason','')}")
+    L += ["", "## 추천 사이트·커뮤니티"]
+    for s in strat.get("sites", []):
+        rgn = "해외" if "해외" in (s.get("region", "")) else "국내"
+        L.append(f"- [{rgn}] **{s.get('name','')}** ({s.get('where','')}) — 모이는 사람: {s.get('audience','')} / 이유: {s.get('reason','')}")
+    L += ["", "## 스스로 새 소구점 발굴법", strat.get("self_method", "")]
+    return "\n".join(L)
+
+
+def _strategy_blocks(product, appeal, strat):
+    b = []
+
+    def h2(t): b.append({"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rt(t)}})
+
+    def h3(t): b.append({"object": "block", "type": "heading_3", "heading_3": {"rich_text": _rt(t)}})
+
+    def para(t): b.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rt(t)}})
+
+    def bullet(t): b.append({"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _rt(t)}})
+
+    t = (strat or {}).get("target", {}) or {}
+    para(f"소구점: {appeal or '(미입력)'} · {datetime.now():%Y-%m-%d %H:%M}")
+    h2("이 제품은")
+    para(strat.get("product_understanding", ""))
+    h2("핵심 타겟층")
+    bullet(f"나이대: {t.get('age','')}")
+    bullet(f"성격·라이프스타일: {t.get('personality','')}")
+    bullet(f"결핍·니즈: {t.get('needs','')}")
+    h2("추천 키워드")
+    for k in strat.get("keywords", []):
+        bullet(f"{k.get('keyword','')} — {k.get('reason','')}")
+    h2("추천 사이트·커뮤니티")
+    for s in strat.get("sites", []):
+        rgn = "해외" if "해외" in (s.get("region", "")) else "국내"
+        bullet(f"[{rgn}] {s.get('name','')} ({s.get('where','')}) — {s.get('audience','')} / {s.get('reason','')}")
+    h2("스스로 새 소구점 발굴법")
+    para(strat.get("self_method", ""))
+    return b
+
+
+def push_strategy_to_notion(product, appeal, strat):
+    """조사 전략을 노션 페이지로 생성."""
+    token, parent = _notion_cfg()
+    if not (token and parent):
+        return {"ok": False, "msg": "노션 토큰/부모페이지가 설정되지 않음"}
+    title = f"조사 전략 — {product} ({datetime.now():%m/%d})"
+    payload = {
+        "parent": {"page_id": parent},
+        "properties": {"title": {"title": _rt(title)}},
+        "children": _strategy_blocks(product, appeal, strat)[:100],
+    }
+    try:
+        res = _nreq("pages", payload, token)
+        return {"ok": True, "url": res.get("url", ""), "id": res.get("id", "")}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}

@@ -62,7 +62,48 @@ def _extract_json(text):
         return None
 
 
-def expand_queries(product, appeal):
+def _extract_obj(text):
+    """응답 텍스트에서 JSON 객체({...})만 뽑아 파싱."""
+    try:
+        s, e = text.find("{"), text.rfind("}")
+        return json.loads(text[s:e + 1])
+    except Exception:
+        return None
+
+
+def plan_strategy(product, product_desc, appeal):
+    """제품·제품설명·소구점을 받아 '조사 전략'을 만든다.
+    반환: {product_understanding, target{age,personality,needs}, keywords[], sites[], self_method}
+    AI 없으면 None."""
+    if not ai_mode():
+        return None
+    prompt = (
+        f"너는 마케팅 시장조사 전략가다.\n"
+        f"제품명: {product}\n"
+        f"제품 설명: {product_desc or '(설명 없음 - 제품명으로 추정)'}\n"
+        f"강조하려는 소구점: {appeal or '(미입력 - 네가 가장 효과적인 소구 방향을 제안)'}\n\n"
+        "이 제품과 소구점을 시장조사하기 위한 전략을 세워라. 다음을 깊이 분석해:\n"
+        "1) 이 제품이 어떤 제품인지 한 문단으로 정의.\n"
+        "2) 이 소구점에 반응할 핵심 타겟층 — 나이대, 성격/라이프스타일, 그들이 가진 '결핍·니즈'(왜 이 제품을 원하는가).\n"
+        "3) 어떤 검색어로 찾으면 좋을지 8~12개 — 각 키워드마다 '왜 이 키워드인지' 이유. "
+        "경쟁사·후기·결핍감정·트렌드·상황(언제 쓰나) 관점을 섞어.\n"
+        "4) 어떤 사이트/커뮤니티를 조사하면 좋을지 6~10개 — 그 소구의 타겟층(나이대·성격·결핍이 많은 사람들)이 모이는 곳 위주로. "
+        "국내(네이버카페·디시 특정갤·인스타 등)와 해외(Reddit 서브레딧·Quora·전문 포럼 등)를 모두 포함. "
+        "각 사이트마다 '거기에 어떤 사람이 모이는지'와 '왜 우리 조사에 유용한지' 이유.\n"
+        "5) 앞으로 스스로 새 소구점을 발굴하려면 어떤 키워드·사이트를 어떤 순서로 조사하면 좋을지(2~4줄).\n\n"
+        "반드시 아래 JSON 객체 하나로만, 설명 머리말 없이 답해(한국어):\n"
+        "{\n"
+        '  "product_understanding": "...",\n'
+        '  "target": {"age":"...", "personality":"...", "needs":"..."},\n'
+        '  "keywords": [{"keyword":"...","reason":"..."}],\n'
+        '  "sites": [{"name":"...","region":"국내|해외","where":"URL이나 갤러리/서브레딧명","audience":"모이는 사람","reason":"왜 유용한가"}],\n'
+        '  "self_method": "..."\n'
+        "}"
+    )
+    return _extract_obj(_ask(prompt, timeout=150))
+
+
+def expand_queries(product, appeal, product_desc=""):
     """제품 + 소구로 검색어 세트를 만든다."""
     base = [
         product,
@@ -74,7 +115,7 @@ def expand_queries(product, appeal):
     ]
     if ai_mode():
         prompt = (
-            f"제품: {product}\n소구점: {appeal}\n"
+            f"제품: {product}\n제품 설명: {product_desc or '(없음)'}\n소구점: {appeal}\n"
             "위 제품을 시장조사할 때 쓸 한국어 검색어 6개를 만들어줘. "
             "경쟁사명, 연관 트렌드어, 소비자 후기 관점을 섞어. "
             '설명 없이 JSON 배열로만 답해. 예: ["검색어1","검색어2"]'
@@ -85,7 +126,7 @@ def expand_queries(product, appeal):
     return base
 
 
-def summarize(items, product, appeal):
+def summarize(items, product, appeal, product_desc=""):
     """
     각 항목에 relevance(1-5), appeal_fit(1-5), summary 추가.
     AI 없으면 snippet을 요약으로 사용.
@@ -106,7 +147,8 @@ def summarize(items, product, appeal):
             for j, it in enumerate(chunk)
         )
         prompt = (
-            f"우리 제품: {product}\n우리가 강조하려는 소구점: {appeal}\n\n"
+            f"우리 제품: {product}\n제품 설명: {product_desc or '(없음)'}\n"
+            f"우리가 강조하려는 소구점: {appeal}\n\n"
             f"아래 검색결과 각각을 평가해줘:\n{listing}\n\n"
             "각 항목에 대해 설명 없이 JSON 배열로만 답해. 각 원소는 "
             '{"i":번호, "relevance":1~5(제품 관련성), "appeal_fit":1~5(소구점 부합도), '

@@ -12,3 +12,5 @@ config.py
 *.md.tmp
 market_research.*
 server.log
+_server.*
+_plantest.json

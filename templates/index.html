@@ -150,9 +150,15 @@
       <div class="sub" style="margin-bottom:8px;">
         <b>로그인크롬_켜기.bat</b>을 한 번 실행해 두면, 검색어만 넣고 누르세요. 제가 네이버쇼핑을 사람처럼 검색→상품 진입해 리뷰를 가져와 분석합니다.
       </div>
+      <div style="background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
+        <b style="font-size:13px; color:#065f46;">소구만으로 — 제품도 제가 골라드립니다 (권장)</b>
+        <div class="sub" style="margin:4px 0 8px;">소구점을 넣고 누르면, AI가 그 소구에 맞는 경쟁·대체 제품을 골라 네이버 리뷰를 모아 분석합니다. 검색어를 직접 안 넣어도 됩니다.</div>
+        <button id="suggestBtn" onclick="suggestReviews()" style="background:#059669; margin-top:0;">소구에 맞는 제품 제안 + 리뷰 자동수집</button>
+        <div id="suggestProgress" class="sub" style="margin-top:8px;"></div>
+      </div>
       <div class="row">
         <div>
-          <label>검색할 경쟁사/상품명</label>
+          <label>또는 검색어 직접 지정</label>
           <input type="text" id="autoQuery" placeholder="예: 닭가슴살 샐러드 / 프레시지 샐러드">
         </div>
         <div style="flex:0 0 auto;">
@@ -160,7 +166,7 @@
           <input type="text" id="autoMax" value="4" style="width:70px;">
         </div>
       </div>
-      <button id="autoBtn" onclick="autoReviews()" style="background:#16a34a;">네이버 리뷰 자동 수집</button>
+      <button id="autoBtn" onclick="autoReviews()" style="background:#16a34a;">네이버 리뷰 자동 수집(직접 검색어)</button>
 
       <div style="margin-top:14px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px;">
         <b style="font-size:13px; color:#374151;">막히면 차선책</b>
@@ -458,6 +464,55 @@ function renderDict(d) {
     `<div style="margin:6px 0;font-size:12.5px;"><b>R${r.round}</b> — 검색어: ${(r.queries||[]).map(esc).join(' · ')} <span class="sub">(글 ${r.kept}, 새 표현 ${r.new_phrases})</span></div>`
   ).join('');
   document.getElementById('dictRounds').innerHTML = rl;
+}
+
+let suggestTimer = null;
+async function suggestReviews() {
+  const appeal = document.getElementById('appeal').value.trim();
+  const product = document.getElementById('product').value.trim();
+  const competitors = document.getElementById('competitors').value.trim();
+  if (!appeal && !product) { alert('소구점이나 카테고리를 먼저 입력하세요.'); return; }
+  const btn = document.getElementById('suggestBtn');
+  btn.disabled = true; btn.textContent = '제품 고르고 수집 중...';
+  document.getElementById('suggestProgress').textContent = 'AI가 소구에 맞는 제품을 고르는 중...';
+  try {
+    const res = await fetch('/reviews_suggest', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({appeal, product, competitors})
+    });
+    const d = await res.json();
+    if (d.error) { document.getElementById('suggestProgress').textContent='오류: '+d.error; btn.disabled=false; btn.textContent='소구에 맞는 제품 제안 + 리뷰 자동수집'; return; }
+    if (suggestTimer) clearInterval(suggestTimer);
+    suggestTimer = setInterval(pollSuggest, 2500);
+  } catch (e) {
+    document.getElementById('suggestProgress').textContent='오류: '+e;
+    btn.disabled=false; btn.textContent='소구에 맞는 제품 제안 + 리뷰 자동수집';
+  }
+}
+
+async function pollSuggest() {
+  try {
+    const res = await fetch('/reviews_suggest_status');
+    const d = await res.json();
+    const pg = document.getElementById('suggestProgress');
+    if (d.last) {
+      let t = d.last.stage || '';
+      if (d.last.idx) t += ` (${d.last.idx}/${d.last.total})`;
+      if (d.last.items!=null) t += ` · 모은 리뷰 ${d.last.items}`;
+      pg.textContent = t;
+    }
+    if (!d.running) {
+      clearInterval(suggestTimer); suggestTimer=null;
+      const btn=document.getElementById('suggestBtn'); btn.disabled=false; btn.textContent='소구에 맞는 제품 제안 + 리뷰 자동수집';
+      if (d.error) { pg.textContent='오류: '+d.error; return; }
+      if (d.result) {
+        const sg = (d.result.suggestions||[]).map(s=>esc(s.q)).join(' · ');
+        pg.innerHTML = `완료 — AI가 고른 제품: <b>${sg}</b> · 리뷰 ${d.result.added}건 분석`;
+        renderVoc(d.result.voc); renderTrend(d.result.trend); renderResults(d.result);
+        document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
+      }
+    }
+  } catch(e) {}
 }
 
 async function autoReviews() {

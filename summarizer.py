@@ -220,6 +220,30 @@ def summarize(items, appeal, category="", competitors=None):
     return out
 
 
+def suggest_review_queries(appeal, category="", competitors=None):
+    """소구점 조사에 맞는 '네이버쇼핑/쿠팡 제품 검색어'를 AI가 제안한다.
+    경쟁사 브랜드명보다 '리뷰가 많을 대중적 제품 검색어'를 우선(자동수집 적중률↑).
+    반환: [{q, why}]"""
+    competitors = competitors or []
+    if not ai_mode():
+        base = [category] + competitors
+        return [{"q": q, "why": ""} for q in base if q][:6]
+    prompt = (
+        "너는 시장조사 리서처다. 우리는 아래 '소구점'에 대한 진짜 소비자 반응을 "
+        "쇼핑몰 상품 '리뷰'에서 읽으려 한다.\n"
+        f"소구점: {appeal}\n카테고리: {category or '(미입력)'}\n"
+        f"경쟁사: {', '.join(competitors) if competitors else '(없음)'}\n\n"
+        "이 소구점을 잘 드러낼 '경쟁사·대체재 제품'을 네이버쇼핑/쿠팡에서 검색할 검색어 6개를 제안해라. "
+        "조건: (1)실제로 많이 팔리고 리뷰가 많을 대중적 제품 검색어 (2)특정 브랜드명보다 '제품 카테고리+속성'(예: '닭가슴살 샐러드','다이어트 도시락')이 리뷰가 풍부 "
+        "(3)소구점 관련 소비자 반응이 잘 나올 제품. 각 why(왜 이 제품 리뷰가 소구 조사에 유용한지).\n"
+        '설명 없이 JSON 배열로만: [{"q":"검색어","why":"이유"}, ...]'
+    )
+    arr = _extract_json(_ask(prompt, timeout=90)) or []
+    out = [{"q": str(d.get("q", "")).strip(), "why": str(d.get("why", "")).strip()}
+           for d in arr if isinstance(d, dict) and d.get("q")]
+    return out[:6]
+
+
 def parse_pasted_reviews(text, appeal, category="", competitors=None, source="붙여넣은 리뷰"):
     """쇼핑몰 리뷰 페이지에서 복사한 통 텍스트를 개별 리뷰로 분리하고 각각 평가한다.
     봇차단과 무관(이미 사람이 본 텍스트). 반환: 평가된 리뷰 item 리스트."""

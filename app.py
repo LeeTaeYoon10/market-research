@@ -16,6 +16,7 @@ import review_collector
 import listener
 
 DEEP = {"running": False, "log": [], "result": None, "error": None}
+RVW = {"running": False, "log": [], "result": None, "error": None}
 
 app = Flask(__name__)
 LAST = {}  # 마지막 결과 보관 (CSV/리포트/노션용)
@@ -207,6 +208,81 @@ def deep_status():
                          "overview": r["overview"], "trend": r["trend"],
                          "phrases_all": r["phrases_all"], "rounds_log": r["rounds_log"],
                          "queries_used": r["queries_used"], "competitors": LAST.get("competitors", [])}
+    return jsonify(out)
+
+
+def _run_review_suggest(appeal, category, competitors, per_product, max_per_query):
+    try:
+        RVW["log"].append({"stage": "제품 제안 중", "items": 0})
+        suggestions = summarizer.suggest_review_queries(appeal, category, competitors)
+        RVW["log"].append({"stage": "제품 제안 완료", "suggestions": suggestions, "items": 0})
+        all_items = []
+        for i, sg in enumerate(suggestions):
+            q = sg["q"]
+            RVW["log"].append({"stage": f"리뷰 수집: {q}", "idx": i + 1, "total": len(suggestions),
+                               "items": len(all_items)})
+            try:
+                blocks = review_collector.auto_naver_reviews(q, max_products=max_per_query)
+            except RuntimeError as e:
+                RVW["error"] = str(e)
+                break
+            for blk in blocks:
+                items = summarizer.parse_pasted_reviews(blk["text"], appeal or "(리뷰)", category,
+                                                        competitors, source=f"네이버쇼핑 리뷰")
+                for it in items:
+                    it["url"] = blk["url"]
+                    it["query"] = q
+                all_items += items
+        # 병합
+        merged = all_items + LAST.get("results", [])
+        seen, dedup = set(), []
+        for it in merged:
+            k = (it.get("source"), it.get("snippet"))
+            if k in seen:
+                continue
+            seen.add(k)
+            dedup.append(it)
+        dedup.sort(key=lambda x: ((x.get("authentic") or 0) + (x.get("relevance") or 0)), reverse=True)
+        overview = analytics.build_overview(dedup, [])
+        trend = analytics.build_trend(dedup)
+        voc = summarizer.build_voc(dedup, appeal, competitors)
+        LAST.update(appeal=appeal, product=category, results=dedup, overview=overview, trend=trend, voc=voc)
+        RVW["result"] = {"count": len(dedup), "added": len(all_items), "results": dedup,
+                         "overview": overview, "trend": trend, "voc": voc,
+                         "suggestions": suggestions, "competitors": competitors}
+    except Exception as e:
+        RVW["error"] = str(e)
+    finally:
+        RVW["running"] = False
+
+
+@app.route("/reviews_suggest", methods=["POST"])
+def reviews_suggest_start():
+    """소구점에 맞는 제품을 AI가 제안하고, 그 제품들의 네이버 리뷰를 자동 수집(백그라운드)."""
+    if RVW["running"]:
+        return jsonify({"error": "이미 리뷰 자동수집이 진행 중입니다."}), 400
+    data = request.get_json()
+    appeal = (data.get("appeal") or LAST.get("appeal") or "").strip()
+    category = (data.get("product") or LAST.get("product") or "").strip()
+    competitors = LAST.get("competitors", []) or [c.strip() for c in (data.get("competitors") or "").split(",") if c.strip()]
+    per_product = int(data.get("per_product") or 20)
+    max_per_query = max(1, min(int(data.get("max_per_query") or 2), 4))
+    if not appeal and not category:
+        return jsonify({"error": "소구점이나 카테고리를 입력하세요."}), 400
+    if not summarizer.ai_mode():
+        return jsonify({"error": "제품 제안은 AI(클로드 코드)가 필요합니다."}), 400
+    RVW.update(running=True, log=[], result=None, error=None)
+    threading.Thread(target=_run_review_suggest,
+                     args=(appeal, category, competitors, per_product, max_per_query), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/reviews_suggest_status")
+def reviews_suggest_status():
+    last = RVW["log"][-1] if RVW["log"] else None
+    out = {"running": RVW["running"], "last": last, "error": RVW["error"], "log": RVW["log"][-12:]}
+    if RVW["result"] and not RVW["running"]:
+        out["result"] = RVW["result"]
     return jsonify(out)
 
 

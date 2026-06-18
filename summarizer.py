@@ -220,6 +220,62 @@ def summarize(items, appeal, category="", competitors=None):
     return out
 
 
+def parse_pasted_reviews(text, appeal, category="", competitors=None, source="붙여넣은 리뷰"):
+    """쇼핑몰 리뷰 페이지에서 복사한 통 텍스트를 개별 리뷰로 분리하고 각각 평가한다.
+    봇차단과 무관(이미 사람이 본 텍스트). 반환: 평가된 리뷰 item 리스트."""
+    competitors = competitors or []
+    text = (text or "").strip()
+    if not text:
+        return []
+    if not ai_mode():
+        # AI 없으면 빈 줄 기준으로만 분리
+        chunks = [c.strip() for c in re.split(r"\n\s*\n", text) if len(c.strip()) > 15]
+        return [{"source": source, "title": c[:40], "url": "", "snippet": c[:300],
+                 "summary": c[:200], "relevance": "", "authentic": "", "sentiment": "",
+                 "quotes": [], "date": "", "query": "(붙여넣기)"} for c in chunks]
+
+    out = []
+    # 너무 길면 잘라서 여러 번
+    MAXC = 7000
+    parts = [text[i:i + MAXC] for i in range(0, len(text), MAXC)] or [text]
+    for part in parts:
+        prompt = (
+            f"우리 소구점: {appeal}\n카테고리: {category or '(미입력)'}\n경쟁사: {', '.join(competitors) if competitors else '(미지정)'}\n\n"
+            "아래는 쇼핑몰 상품 리뷰 페이지에서 복사한 텍스트다. 별점·날짜·작성자·도움돼요 수 등이 섞여 있다.\n"
+            "여기서 '개별 소비자 리뷰'만 정확히 분리해서 각각 평가해라. 메뉴·버튼·광고문구는 버려라.\n\n"
+            f"텍스트:\n{part}\n\n"
+            "설명 없이 JSON 배열로만. 각 원소는 "
+            '{"content":"리뷰 본문(원문 그대로)", "date":"YYYY-MM 또는 빈칸", "rating":"별점 숫자 또는 빈칸", '
+            '"relevance":1~5(소구점 관련), "authentic":1~5(진짜 소비자 리뷰면 높게), '
+            '"sentiment":"긍정|부정|중립|혼합", "summary":"이 소비자가 느낀 점 1~2줄", '
+            '"quotes":["인상적인 원문 표현 0~2개"]}. 리뷰가 없으면 빈 배열 [].'
+        )
+        arr = _extract_json(_ask(prompt)) or []
+        for d in arr:
+            if not isinstance(d, dict):
+                continue
+            content = (d.get("content") or "").strip()
+            if not content:
+                continue
+            out.append({
+                "source": source,
+                "title": content[:40] + ("..." if len(content) > 40 else ""),
+                "url": "",
+                "snippet": content[:300],
+                "summary": d.get("summary", content[:200]),
+                "relevance": d.get("relevance", ""),
+                "authentic": d.get("authentic", ""),
+                "appeal_fit": d.get("authentic", ""),
+                "sentiment": d.get("sentiment", ""),
+                "quotes": [str(q) for q in (d.get("quotes") or []) if q][:2],
+                "date": d.get("date", "") or "",
+                "rating": d.get("rating", ""),
+                "query": "(붙여넣은 리뷰)",
+            })
+    out.sort(key=lambda x: ((x.get("authentic") or 0) + (x.get("relevance") or 0)), reverse=True)
+    return out
+
+
 def build_voc(results, appeal, competitors=None):
     """수집된 소비자 글 전체에서 VOC(불만 top·욕구 top·자주 쓰는 표현)를 집계.
     반환 dict 또는 None(AI 없음)."""

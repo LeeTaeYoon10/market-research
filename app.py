@@ -157,6 +157,67 @@ def reviews():
                     "competitors": competitors})
 
 
+@app.route("/reviews_open", methods=["POST"])
+def reviews_open():
+    """[봇차단 우회] 사용자가 디버그 크롬에서 직접 연 리뷰 페이지를 이동 없이 읽어 평가."""
+    appeal = (LAST.get("appeal") or "").strip()
+    category = (LAST.get("product") or "").strip()
+    competitors = LAST.get("competitors", [])
+    try:
+        raw = review_collector.read_open_reviews(limit=40)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
+    if not raw:
+        return jsonify({"error": "열린 쿠팡·스마트스토어 리뷰 페이지를 찾지 못했어요. 크롬에서 상품의 '리뷰' 탭까지 직접 연 뒤 다시 누르세요."}), 200
+    evaluated = summarizer.summarize(raw, appeal or "(리뷰)", category, competitors)
+    merged = evaluated + LAST.get("results", [])
+    seen, dedup = set(), []
+    for it in merged:
+        k = (it.get("url"), it.get("title"))
+        if k in seen:
+            continue
+        seen.add(k)
+        dedup.append(it)
+    dedup.sort(key=lambda x: ((x.get("authentic") or 0) + (x.get("relevance") or 0)), reverse=True)
+    overview = analytics.build_overview(dedup, [])
+    trend = analytics.build_trend(dedup)
+    voc = summarizer.build_voc(dedup, appeal, competitors)
+    LAST.update(results=dedup, overview=overview, trend=trend, voc=voc)
+    return jsonify({"count": len(dedup), "added": len(evaluated), "results": dedup,
+                    "overview": overview, "trend": trend, "voc": voc, "competitors": competitors})
+
+
+@app.route("/reviews_paste", methods=["POST"])
+def reviews_paste():
+    """리뷰 화면에서 복사한 텍스트를 붙여넣으면 개별 리뷰로 분리·평가(봇차단 무관)."""
+    data = request.get_json()
+    text = (data.get("text") or "").strip()
+    source = (data.get("source") or "붙여넣은 리뷰").strip()
+    if not text:
+        return jsonify({"error": "리뷰 텍스트를 붙여넣어 주세요."}), 400
+    appeal = (LAST.get("appeal") or data.get("appeal") or "").strip()
+    category = (LAST.get("product") or "").strip()
+    competitors = LAST.get("competitors", [])
+    evaluated = summarizer.parse_pasted_reviews(text, appeal or "(리뷰)", category, competitors, source)
+    if not evaluated:
+        return jsonify({"error": "텍스트에서 리뷰를 찾지 못했어요. 리뷰 본문이 포함되게 다시 복사해 주세요."}), 200
+    merged = evaluated + LAST.get("results", [])
+    seen, dedup = set(), []
+    for it in merged:
+        k = (it.get("source"), it.get("snippet"))
+        if k in seen:
+            continue
+        seen.add(k)
+        dedup.append(it)
+    dedup.sort(key=lambda x: ((x.get("authentic") or 0) + (x.get("relevance") or 0)), reverse=True)
+    overview = analytics.build_overview(dedup, [])
+    trend = analytics.build_trend(dedup)
+    voc = summarizer.build_voc(dedup, appeal, competitors)
+    LAST.update(results=dedup, overview=overview, trend=trend, voc=voc)
+    return jsonify({"count": len(dedup), "added": len(evaluated), "results": dedup,
+                    "overview": overview, "trend": trend, "voc": voc, "competitors": competitors})
+
+
 @app.route("/export.csv")
 def export_csv():
     buf = io.StringIO()

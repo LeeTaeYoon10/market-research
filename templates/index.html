@@ -140,7 +140,25 @@
         </div>
         <label class="chk" style="margin-top:0;"><input type="checkbox" id="latestFirst" checked> 최신순부터</label>
       </div>
-      <button id="reviewBtn" onclick="getReviews()" style="background:#b45309;">리뷰 수집 (로그인 크롬)</button>
+      <button id="reviewBtn" onclick="getReviews()" style="background:#b45309;">리뷰 수집 (자동 — 봇차단 가능)</button>
+      <div style="margin-top:12px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px;">
+        <b style="font-size:13px; color:#92400e;">봇차단 우회 방식 (권장)</b>
+        <div class="sub" style="margin:4px 0 8px;">쿠팡·네이버는 자동 접속을 막습니다. <b>로그인 크롬 창에서 직접</b> 경쟁사 상품 → <b>리뷰 탭 → 최신순</b>까지 연 다음, 아래 버튼을 누르면 그 화면을 그대로 읽어옵니다(여러 탭 동시 가능).</div>
+        <button id="reviewOpenBtn" onclick="readOpenReviews()" style="background:#16a34a; margin-top:0;">현재 열린 리뷰 페이지 읽기</button>
+      </div>
+
+      <div style="margin-top:12px;">
+        <label style="color:#166534;">리뷰 텍스트 붙여넣기 (가장 확실 — 차단 무관)</label>
+        <div class="sub" style="margin-bottom:6px;">쿠팡·스마트스토어·어디든 리뷰 화면에서 텍스트를 드래그 복사(Ctrl+C)해 붙여넣으면, 개별 리뷰로 분리·평가합니다.</div>
+        <textarea id="pasteReviews" rows="4" placeholder="여기에 리뷰 화면 텍스트를 붙여넣으세요 (별점·날짜·내용 섞여 있어도 됩니다)"></textarea>
+        <div class="row" style="margin-top:8px;">
+          <div style="flex:0 0 auto;">
+            <label>출처 표기</label>
+            <input type="text" id="pasteSource" value="쿠팡 리뷰" style="width:160px;">
+          </div>
+          <button id="pasteBtn" onclick="analyzePaste()" style="background:#166534; margin-top:0;">붙여넣은 리뷰 분석</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -349,6 +367,44 @@ const SENT = {'긍정':['#dcfce7','#166534'],'부정':['#fee2e2','#991b1b'],'중
 function sentTag(s){ const c=SENT[s]; return c?`<span style="background:${c[0]};color:${c[1]};font-size:11px;padding:2px 7px;border-radius:8px;">${s}</span>`:'-'; }
 
 let LASTRESULTS = [];
+
+async function analyzePaste() {
+  const text = document.getElementById('pasteReviews').value;
+  if (!text.trim()) { alert('리뷰 텍스트를 붙여넣어 주세요.'); return; }
+  const source = document.getElementById('pasteSource').value.trim() || '붙여넣은 리뷰';
+  const appeal = document.getElementById('appeal').value.trim();
+  const btn = document.getElementById('pasteBtn');
+  btn.disabled = true; btn.textContent = '분석 중...';
+  document.getElementById('status').textContent = '붙여넣은 리뷰를 개별로 분리·평가 중입니다. 30초~1분...';
+  try {
+    const res = await fetch('/reviews_paste', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text, source, appeal})
+    });
+    const data = await res.json();
+    if (data.error) { document.getElementById('status').textContent = '오류: ' + data.error; return; }
+    document.getElementById('status').textContent = (data.added||0) + '건 리뷰 분석됨';
+    renderVoc(data.voc); renderTrend(data.trend); renderResults(data);
+    document.getElementById('pasteReviews').value = '';
+    document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
+  } catch (e) { document.getElementById('status').textContent = '오류: ' + e; }
+  finally { btn.disabled = false; btn.textContent = '붙여넣은 리뷰 분석'; }
+}
+
+async function readOpenReviews() {
+  const btn = document.getElementById('reviewOpenBtn');
+  btn.disabled = true; btn.textContent = '읽는 중...';
+  document.getElementById('status').textContent = '크롬에 열린 리뷰 페이지를 읽어 평가 중입니다. 30초~1분...';
+  try {
+    const res = await fetch('/reviews_open', {method:'POST'});
+    const data = await res.json();
+    if (data.error) { document.getElementById('status').textContent = '오류: ' + data.error; return; }
+    document.getElementById('status').textContent = data.added ? (data.added + '건 리뷰 읽음') : '';
+    renderVoc(data.voc); renderTrend(data.trend); renderResults(data);
+    document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
+  } catch (e) { document.getElementById('status').textContent = '오류: ' + e; }
+  finally { btn.disabled = false; btn.textContent = '현재 열린 리뷰 페이지 읽기'; }
+}
 
 async function getReviews() {
   const review_urls = document.getElementById('reviewUrls').value;

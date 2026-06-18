@@ -176,6 +176,90 @@ def _norm_date(text):
     return ""
 
 
+def read_open_reviews(limit=40):
+    """[봇차단 우회] 사용자가 디버그 크롬에서 '직접 연' 쿠팡·스마트스토어 리뷰 페이지들을
+    이동(goto) 없이 현재 DOM 그대로 읽는다. 사람이 연 페이지라 봇탐지를 피한다."""
+    out = []
+    p = browser = None
+    try:
+        p, browser, page = connect()
+    except Exception as e:
+        raise RuntimeError(
+            "로그인된 크롬에 연결하지 못했습니다. '로그인크롬_켜기.bat'을 먼저 실행하세요. "
+            f"(상세: {e})"
+        )
+    try:
+        ctx = browser.contexts[0] if browser.contexts else None
+        pages = ctx.pages if ctx else []
+        for pg in pages:
+            url = pg.url
+            k = _kind(url)
+            if k == "unknown":
+                continue
+            try:
+                # 리뷰 더 로드되도록 살짝 스크롤(이동 아님)
+                for _ in range(4):
+                    pg.mouse.wheel(0, 2500)
+                    time.sleep(0.8)
+                html = pg.content()
+            except Exception:
+                continue
+            if k == "coupang":
+                out += _parse_coupang_html(html, url, limit)
+            elif k == "smartstore":
+                out += _parse_smartstore_html(html, url, limit)
+    finally:
+        try:
+            if browser:
+                browser.close()
+        except Exception:
+            pass
+        try:
+            if p:
+                p.stop()
+        except Exception:
+            pass
+    return out
+
+
+def _parse_coupang_html(html, url, limit):
+    soup = BeautifulSoup(html, "lxml")
+    items, seen = [], set()
+    for a in soup.select("article.sdp-review__article__list"):
+        cnode = a.select_one(".sdp-review__article__list__review__content")
+        content = _clean(cnode.get_text(" ")) if cnode else ""
+        if not content or content in seen:
+            continue
+        seen.add(content)
+        date = a.select_one(".sdp-review__article__list__info__product-info__reg-date")
+        items.append({"source": "쿠팡 리뷰", "title": content[:40], "url": url,
+                      "snippet": content[:300], "rating": "",
+                      "date": _norm_date(date.get_text() if date else ""),
+                      "query": "(쿠팡 상품리뷰)"})
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _parse_smartstore_html(html, url, limit):
+    soup = BeautifulSoup(html, "lxml")
+    items, seen = [], set()
+    for li in soup.find_all(["li", "div"]):
+        cls = " ".join(li.get("class") or [])
+        if "review" not in cls.lower():
+            continue
+        txt = _clean(li.get_text(" "))
+        if len(txt) < 25 or txt in seen:
+            continue
+        seen.add(txt)
+        items.append({"source": "스마트스토어 리뷰", "title": txt[:40], "url": url,
+                      "snippet": txt[:300], "rating": "",
+                      "date": _norm_date(txt), "query": "(스마트스토어 상품리뷰)"})
+        if len(items) >= limit:
+            break
+    return items
+
+
 def collect_reviews(urls, limit=20, latest_first=True):
     """여러 상품 URL의 리뷰를 수집해 리스트 반환. 크롬(9222) 연결 필요."""
     out = []

@@ -157,6 +157,49 @@ def reviews():
                     "competitors": competitors})
 
 
+@app.route("/reviews_auto", methods=["POST"])
+def reviews_auto():
+    """[봇차단 우회] 네이버 쇼핑을 사람처럼 검색·진입해 경쟁사 상품 리뷰를 자동 수집·분석."""
+    data = request.get_json()
+    query = (data.get("query") or "").strip()
+    max_products = int(data.get("max_products") or 3)
+    if not query:
+        return jsonify({"error": "검색할 상품/경쟁사명을 입력하세요."}), 400
+    appeal = (LAST.get("appeal") or data.get("appeal") or "").strip()
+    category = (LAST.get("product") or "").strip()
+    competitors = LAST.get("competitors", [])
+    try:
+        blocks = review_collector.auto_naver_reviews(query, max_products=max_products)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 400
+    if not blocks:
+        return jsonify({"error": "상품 페이지에 도달하지 못했어요. 로그인 크롬이 켜져 있는지 확인하세요."}), 200
+    evaluated = []
+    for blk in blocks:
+        items = summarizer.parse_pasted_reviews(blk["text"], appeal or "(리뷰)", category,
+                                                competitors, source="네이버쇼핑 리뷰")
+        for it in items:
+            it["url"] = blk["url"]
+        evaluated += items
+    if not evaluated:
+        return jsonify({"error": "상품엔 도달했지만 리뷰 텍스트를 추출하지 못했어요. 검색어를 바꿔보세요."}), 200
+    merged = evaluated + LAST.get("results", [])
+    seen, dedup = set(), []
+    for it in merged:
+        k = (it.get("source"), it.get("snippet"))
+        if k in seen:
+            continue
+        seen.add(k)
+        dedup.append(it)
+    dedup.sort(key=lambda x: ((x.get("authentic") or 0) + (x.get("relevance") or 0)), reverse=True)
+    overview = analytics.build_overview(dedup, [])
+    trend = analytics.build_trend(dedup)
+    voc = summarizer.build_voc(dedup, appeal, competitors)
+    LAST.update(results=dedup, overview=overview, trend=trend, voc=voc)
+    return jsonify({"count": len(dedup), "added": len(evaluated), "results": dedup,
+                    "overview": overview, "trend": trend, "voc": voc, "competitors": competitors})
+
+
 @app.route("/reviews_open", methods=["POST"])
 def reviews_open():
     """[봇차단 우회] 사용자가 디버그 크롬에서 직접 연 리뷰 페이지를 이동 없이 읽어 평가."""

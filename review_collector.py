@@ -176,6 +176,95 @@ def _norm_date(text):
     return ""
 
 
+def auto_naver_reviews(query, max_products=3):
+    """[봇차단 우회] 네이버 쇼핑을 '사람처럼' 검색→상품 진입해 리뷰 텍스트를 가져온다.
+    직접 goto는 막히지만, 쇼핑 홈에서 검색창에 입력→상품 클릭하는 흐름은 통과한다.
+    반환: [{url, text}] (text=상품페이지에서 추출한 리뷰영역 텍스트). AI 파싱은 호출측에서."""
+    out = []
+    p = browser = None
+    try:
+        p, browser, page = connect()
+    except Exception as e:
+        raise RuntimeError(
+            "로그인 크롬에 연결하지 못했습니다. '로그인크롬_켜기.bat'을 먼저 실행하세요. "
+            f"(상세: {e})"
+        )
+    try:
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        pg = ctx.new_page()
+        pg.goto("https://shopping.naver.com/ns/home", timeout=25000, wait_until="domcontentloaded")
+        time.sleep(2.5)
+        try:
+            pg.click('button:has-text("검색")', timeout=4000)
+            time.sleep(1.0)
+        except Exception:
+            pass
+        box = pg.query_selector('input[type=text]:not([id])') or pg.query_selector('input[type=text]')
+        if not box:
+            raise RuntimeError("네이버 쇼핑 검색창을 찾지 못했습니다.")
+        box.click()
+        box.type(query, delay=55)
+        box.press("Enter")
+        time.sleep(4)
+        hrefs = pg.evaluate("[...document.querySelectorAll('a[href*=products]')].map(a=>a.href)")
+        # 개별 상품(판매자/윈도) 우선, 카탈로그(/main/products) 후순위
+        seen, links = set(), []
+        for h in hrefs:
+            m = re.search(r"https?://[^ ]*?/products/\d+", h)
+            if not m:
+                continue
+            base = h.split("?")[0]
+            if base in seen:
+                continue
+            seen.add(base)
+            links.append(h)
+        # 카탈로그 뒤로
+        links.sort(key=lambda h: 1 if "/main/products" in h else 0)
+        for href in links[:max_products]:
+            try:
+                pp = ctx.new_page()
+                pp.goto(href, timeout=20000, wait_until="domcontentloaded")
+                time.sleep(2.5)
+                if "로그인" in (pp.title() or ""):
+                    pp.close()
+                    continue
+                # 리뷰 탭 + 최신순
+                for txt in ["리뷰", "최신순"]:
+                    try:
+                        pp.click(f'a:has-text("{txt}"), button:has-text("{txt}")', timeout=2500)
+                        time.sleep(1.5)
+                    except Exception:
+                        pass
+                for _ in range(12):
+                    pp.mouse.wheel(0, 1700)
+                    time.sleep(0.45)
+                body = pp.evaluate("document.body.innerText") or ""
+                # 푸터(약관/사업자정보) 제거 후, 리뷰가 모이는 뒷부분을 보냄
+                for foot in ["네이버 이용약관", "하위영역", "Copyright"]:
+                    fi = body.find(foot)
+                    if fi > 800:
+                        body = body[:fi]
+                        break
+                seg = body[-9000:] if len(body) > 9000 else body
+                out.append({"url": href.split("?")[0], "text": seg})
+                pp.close()
+            except Exception as e:
+                print(f"[상품 진입 실패] {href[:50]}: {e}")
+        pg.close()
+    finally:
+        try:
+            if browser:
+                browser.close()
+        except Exception:
+            pass
+        try:
+            if p:
+                p.stop()
+        except Exception:
+            pass
+    return out
+
+
 def read_open_reviews(limit=40):
     """[봇차단 우회] 사용자가 디버그 크롬에서 '직접 연' 쿠팡·스마트스토어 리뷰 페이지들을
     이동(goto) 없이 현재 DOM 그대로 읽는다. 사람이 연 페이지라 봇탐지를 피한다."""

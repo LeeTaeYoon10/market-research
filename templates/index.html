@@ -127,36 +127,33 @@
     <button id="run" onclick="run()">조사 시작</button>
 
     <div style="margin-top:22px; border-top:1px dashed #e5e7eb; padding-top:16px;">
-      <label style="color:#b45309;">쿠팡·스마트스토어 상품 리뷰 수집 (최신순) — 로그인 크롬 필요</label>
+      <label style="color:#166534; font-size:14px;">네이버쇼핑 리뷰 자동 수집·분석 (봇차단 우회 완료) — 로그인 크롬 필요</label>
       <div class="sub" style="margin-bottom:8px;">
-        ① <b>로그인크롬_켜기.bat</b> 실행 → 뜨는 창에서 쿠팡·네이버 로그인(처음 1회) →
-        ② 아래에 경쟁사 상품 URL을 붙여넣고 ③ 리뷰 수집. <span style="color:#991b1b;">쿠팡은 봇차단으로 막힐 수 있어요.</span>
+        <b>로그인크롬_켜기.bat</b>을 한 번 실행해 두면, 검색어만 넣고 누르세요. 제가 네이버쇼핑을 사람처럼 검색→상품 진입해 리뷰를 가져와 분석합니다.
       </div>
-      <textarea id="reviewUrls" rows="3" placeholder="https://www.coupang.com/vp/products/...&#10;https://smartstore.naver.com/.../products/..."></textarea>
-      <div class="row" style="margin-top:8px;">
-        <div style="flex:0 0 auto;">
-          <label>상품당 리뷰 수</label>
-          <input type="text" id="perReview" value="20" style="width:80px;">
+      <div class="row">
+        <div>
+          <label>검색할 경쟁사/상품명</label>
+          <input type="text" id="autoQuery" placeholder="예: 닭가슴살 샐러드 / 프레시지 샐러드">
         </div>
-        <label class="chk" style="margin-top:0;"><input type="checkbox" id="latestFirst" checked> 최신순부터</label>
+        <div style="flex:0 0 auto;">
+          <label>상품 수</label>
+          <input type="text" id="autoMax" value="4" style="width:70px;">
+        </div>
       </div>
-      <button id="reviewBtn" onclick="getReviews()" style="background:#b45309;">리뷰 수집 (자동 — 봇차단 가능)</button>
-      <div style="margin-top:12px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px;">
-        <b style="font-size:13px; color:#92400e;">봇차단 우회 방식 (권장)</b>
-        <div class="sub" style="margin:4px 0 8px;">쿠팡·네이버는 자동 접속을 막습니다. <b>로그인 크롬 창에서 직접</b> 경쟁사 상품 → <b>리뷰 탭 → 최신순</b>까지 연 다음, 아래 버튼을 누르면 그 화면을 그대로 읽어옵니다(여러 탭 동시 가능).</div>
-        <button id="reviewOpenBtn" onclick="readOpenReviews()" style="background:#16a34a; margin-top:0;">현재 열린 리뷰 페이지 읽기</button>
-      </div>
+      <button id="autoBtn" onclick="autoReviews()" style="background:#16a34a;">네이버 리뷰 자동 수집</button>
 
-      <div style="margin-top:12px;">
-        <label style="color:#166534;">리뷰 텍스트 붙여넣기 (가장 확실 — 차단 무관)</label>
-        <div class="sub" style="margin-bottom:6px;">쿠팡·스마트스토어·어디든 리뷰 화면에서 텍스트를 드래그 복사(Ctrl+C)해 붙여넣으면, 개별 리뷰로 분리·평가합니다.</div>
-        <textarea id="pasteReviews" rows="4" placeholder="여기에 리뷰 화면 텍스트를 붙여넣으세요 (별점·날짜·내용 섞여 있어도 됩니다)"></textarea>
+      <div style="margin-top:14px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px;">
+        <b style="font-size:13px; color:#374151;">막히면 차선책</b>
+        <div class="sub" style="margin:4px 0 8px;">쿠팡은 차단이 강합니다(Akamai). 안 되면 리뷰 화면 텍스트를 복사해 붙여넣으세요 — 어디든 됩니다.</div>
+        <textarea id="pasteReviews" rows="3" placeholder="리뷰 화면 텍스트 붙여넣기 (별점·날짜·내용 섞여 있어도 됨)"></textarea>
         <div class="row" style="margin-top:8px;">
           <div style="flex:0 0 auto;">
             <label>출처 표기</label>
-            <input type="text" id="pasteSource" value="쿠팡 리뷰" style="width:160px;">
+            <input type="text" id="pasteSource" value="쿠팡 리뷰" style="width:150px;">
           </div>
           <button id="pasteBtn" onclick="analyzePaste()" style="background:#166534; margin-top:0;">붙여넣은 리뷰 분석</button>
+          <button id="reviewOpenBtn" onclick="readOpenReviews()" style="background:#6b7280; margin-top:0;">열린 리뷰 페이지 읽기</button>
         </div>
       </div>
     </div>
@@ -368,6 +365,28 @@ function sentTag(s){ const c=SENT[s]; return c?`<span style="background:${c[0]};
 
 let LASTRESULTS = [];
 
+async function autoReviews() {
+  const query = document.getElementById('autoQuery').value.trim();
+  if (!query) { alert('검색할 경쟁사/상품명을 넣어주세요.'); return; }
+  const max_products = document.getElementById('autoMax').value;
+  const appeal = document.getElementById('appeal').value.trim();
+  const btn = document.getElementById('autoBtn');
+  btn.disabled = true; btn.textContent = '수집 중...';
+  document.getElementById('status').textContent = '네이버쇼핑을 사람처럼 검색·진입해 리뷰를 가져와 분석 중입니다. 2~4분 소요...';
+  try {
+    const res = await fetch('/reviews_auto', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({query, max_products, appeal})
+    });
+    const data = await res.json();
+    if (data.error) { document.getElementById('status').textContent = '오류: ' + data.error; return; }
+    document.getElementById('status').textContent = (data.added||0) + '건 리뷰 자동 수집·분석됨';
+    renderVoc(data.voc); renderTrend(data.trend); renderResults(data);
+    document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
+  } catch (e) { document.getElementById('status').textContent = '오류: ' + e; }
+  finally { btn.disabled = false; btn.textContent = '네이버 리뷰 자동 수집'; }
+}
+
 async function analyzePaste() {
   const text = document.getElementById('pasteReviews').value;
   if (!text.trim()) { alert('리뷰 텍스트를 붙여넣어 주세요.'); return; }
@@ -404,30 +423,6 @@ async function readOpenReviews() {
     document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
   } catch (e) { document.getElementById('status').textContent = '오류: ' + e; }
   finally { btn.disabled = false; btn.textContent = '현재 열린 리뷰 페이지 읽기'; }
-}
-
-async function getReviews() {
-  const review_urls = document.getElementById('reviewUrls').value;
-  if (!review_urls.trim()) { alert('쿠팡·스마트스토어 상품 URL을 넣어주세요.'); return; }
-  const per_review = document.getElementById('perReview').value;
-  const latest_first = document.getElementById('latestFirst').checked;
-  const appeal = document.getElementById('appeal').value.trim();
-  const product = document.getElementById('product').value.trim();
-  const btn = document.getElementById('reviewBtn');
-  btn.disabled = true; btn.textContent = '리뷰 수집 중...';
-  document.getElementById('status').textContent = '로그인 크롬으로 상품 리뷰를 최신순 수집·평가 중입니다. 1~3분...';
-  try {
-    const res = await fetch('/reviews', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({review_urls, per_review, latest_first, appeal, product})
-    });
-    const data = await res.json();
-    if (data.error) { document.getElementById('status').textContent = '오류: ' + data.error; return; }
-    document.getElementById('status').textContent = data.added ? (data.added + '건 리뷰 추가됨') : '';
-    renderVoc(data.voc); renderTrend(data.trend); renderResults(data);
-    document.getElementById('resultCard').scrollIntoView({behavior:'smooth'});
-  } catch (e) { document.getElementById('status').textContent = '오류: ' + e; }
-  finally { btn.disabled = false; btn.textContent = '리뷰 수집 (로그인 크롬)'; }
 }
 
 function renderVoc(voc) {

@@ -16,3 +16,4 @@ _server.*
 _plantest.json
 _voctest.json
 browser_profile/
+_*.png

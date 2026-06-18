@@ -13,10 +13,11 @@ if not exist "%CHROME%" (
 )
 
 echo.
-echo [안내] 이 검은 창과 곧 뜨는 크롬 창을 모두 그대로 두세요. (닫으면 리뷰 수집 불가)
-echo 크롬 창에서 쿠팡과 네이버에 로그인한 뒤, 도구에서 '리뷰 수집'을 누르세요.
+echo [안내] 이건 보통 실행할 필요 없습니다. 도구에서 '네이버 리뷰 자동 수집'을 누르면
+echo        프로그램이 화면 밖에 크롬을 알아서 띄워 수집합니다(작업 방해 없음).
+echo        쿠팡 리뷰를 직접 로그인해서 보고 싶을 때만 이 파일을 쓰세요.
 echo.
 
-REM start 로 띄우면 기존 크롬에 흡수돼 디버그포트가 안 열린다.
-REM 전용 프로필 + 직접 실행(이 창 유지)으로 별도 인스턴스를 강제한다.
-"%CHROME%" --remote-debugging-port=9222 --user-data-dir="%~dp0browser_profile" https://www.coupang.com https://nid.naver.com/nidlogin.login
+REM 전용 프로필 + 화면 밖(-2400) 위치로 별도 크롬 기동(detached). powershell로 띄워 cmd창 즉시 닫힘.
+powershell -NoProfile -WindowStyle Hidden -Command "Start-Process '%CHROME%' -ArgumentList '--remote-debugging-port=9222','--user-data-dir=\"%~dp0browser_profile\"','--window-position=-2400,-2400','--window-size=1400,1000','about:blank'"
+echo 백그라운드 크롬(화면 밖)을 켰습니다. 이 창은 닫아도 됩니다.

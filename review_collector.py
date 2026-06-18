@@ -12,12 +12,63 @@
 
 connect_over_cdp 로 붙으므로 사용자의 로그인 세션을 그대로 사용한다.
 """
+import os
 import re
 import time
+import socket
+import subprocess
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-CDP_URL = "http://localhost:9222"
+CDP_URL = "http://127.0.0.1:9222"
+CDP_PORT = 9222
+PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_profile")
+
+_CHROME_PATHS = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Google\Chrome\Application\chrome.exe"),
+]
+
+
+def _port_open(port=CDP_PORT):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.4)
+    try:
+        s.connect(("127.0.0.1", port))
+        return True
+    except Exception:
+        return False
+    finally:
+        s.close()
+
+
+def ensure_chrome():
+    """디버그 크롬(9222)이 없으면 '화면 밖'에 조용히 띄운다. 작업 방해 없음.
+    실제 크롬이라 봇차단을 통과하면서도 화면엔 보이지 않는다."""
+    if _port_open():
+        return
+    chrome = next((p for p in _CHROME_PATHS if p and os.path.exists(p)), None)
+    if not chrome:
+        raise RuntimeError("크롬을 찾지 못했습니다. Chrome 설치 경로를 확인하세요.")
+    os.makedirs(PROFILE_DIR, exist_ok=True)
+    DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(
+        [chrome,
+         f"--remote-debugging-port={CDP_PORT}",
+         f"--user-data-dir={PROFILE_DIR}",
+         "--window-position=-2400,-2400",  # 화면 밖(보이지 않음)
+         "--window-size=1400,1000",
+         "--no-first-run", "--no-default-browser-check",
+         "about:blank"],
+        creationflags=DETACHED, close_fds=True,
+    )
+    for _ in range(24):  # 포트 열릴 때까지 대기
+        if _port_open():
+            time.sleep(1.5)
+            return
+        time.sleep(0.5)
+    raise RuntimeError("크롬을 띄웠지만 디버그 포트가 열리지 않았습니다.")
 
 
 def _clean(t):
@@ -25,7 +76,8 @@ def _clean(t):
 
 
 def connect():
-    """디버그 포트로 열린 크롬에 붙어 (playwright, browser, page) 반환. 실패 시 예외."""
+    """디버그 포트로 열린 크롬에 붙어 (playwright, browser, page) 반환. 없으면 화면 밖에 자동 기동."""
+    ensure_chrome()
     p = sync_playwright().start()
     try:
         browser = p.chromium.connect_over_cdp(CDP_URL)
@@ -186,8 +238,7 @@ def auto_naver_reviews(query, max_products=3):
         p, browser, page = connect()
     except Exception as e:
         raise RuntimeError(
-            "로그인 크롬에 연결하지 못했습니다. '로그인크롬_켜기.bat'을 먼저 실행하세요. "
-            f"(상세: {e})"
+            f"리뷰 수집용 크롬 연결에 실패했습니다. (상세: {e})"
         )
     try:
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
@@ -273,10 +324,7 @@ def read_open_reviews(limit=40):
     try:
         p, browser, page = connect()
     except Exception as e:
-        raise RuntimeError(
-            "로그인된 크롬에 연결하지 못했습니다. '로그인크롬_켜기.bat'을 먼저 실행하세요. "
-            f"(상세: {e})"
-        )
+        raise RuntimeError(f"리뷰 수집용 크롬 연결에 실패했습니다. (상세: {e})")
     try:
         ctx = browser.contexts[0] if browser.contexts else None
         pages = ctx.pages if ctx else []
@@ -357,8 +405,7 @@ def collect_reviews(urls, limit=20, latest_first=True):
         p, browser, page = connect()
     except Exception as e:
         raise RuntimeError(
-            "로그인된 크롬에 연결하지 못했습니다. '로그인크롬_켜기.bat'을 먼저 실행하고 "
-            f"쿠팡·네이버에 로그인했는지 확인하세요. (상세: {e})"
+            f"리뷰 수집용 크롬 연결에 실패했습니다. (상세: {e})"
         )
     try:
         for url in urls:

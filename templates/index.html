@@ -127,6 +127,25 @@
     <button id="run" onclick="run()">조사 시작</button>
 
     <div style="margin-top:22px; border-top:1px dashed #e5e7eb; padding-top:16px;">
+      <label style="color:#4f46e5; font-size:14px;">딥 리스닝 — 소구로 진짜 소비자 언어를 깊고 많이 (스노우볼)</label>
+      <div class="sub" style="margin-bottom:8px;">
+        소구점을 5축으로 분해해 검색→소비자 표현 추출→<b>그 표현을 다음 검색어로 재투입</b>을 여러 라운드 자동 반복합니다. 책상에서 못 뽑을 날것의 말이 눈덩이처럼 모입니다.
+      </div>
+      <div class="row">
+        <div style="flex:0 0 auto;">
+          <label>라운드 (깊이)</label>
+          <input type="text" id="deepRounds" value="4" style="width:64px;">
+        </div>
+        <div style="flex:0 0 auto;">
+          <label>소스별 수집</label>
+          <input type="text" id="deepPer" value="6" style="width:64px;">
+        </div>
+        <button id="deepBtn" onclick="deepListen()" style="background:#4f46e5; margin-top:0;">딥 리스닝 시작</button>
+      </div>
+      <div id="deepProgress" class="sub" style="margin-top:8px;"></div>
+    </div>
+
+    <div style="margin-top:22px; border-top:1px dashed #e5e7eb; padding-top:16px;">
       <label style="color:#166534; font-size:14px;">네이버쇼핑 리뷰 자동 수집·분석 (봇차단 우회 완료) — 로그인 크롬 필요</label>
       <div class="sub" style="margin-bottom:8px;">
         <b>로그인크롬_켜기.bat</b>을 한 번 실행해 두면, 검색어만 넣고 누르세요. 제가 네이버쇼핑을 사람처럼 검색→상품 진입해 리뷰를 가져와 분석합니다.
@@ -178,6 +197,16 @@
   <div class="card" id="ovCard" style="display:none;">
     <strong>조사 개요 — 어디서 어떻게 조사했나</strong>
     <ul class="ov" id="ovList"></ul>
+  </div>
+
+  <!-- 소비자 언어 사전 (딥 리스닝) -->
+  <div class="card" id="dictCard" style="display:none; border-color:#c7d2fe;">
+    <strong style="color:#4f46e5;">소비자 언어 사전 — 진짜 소비자가 쓴 날것의 표현</strong>
+    <div id="dictMeta" class="sub" style="margin:6px 0 10px;"></div>
+    <div id="dictPhrases"></div>
+    <details style="margin-top:12px;"><summary class="sub" style="cursor:pointer;">라운드별 스노우볼 (어떤 표현이 어떤 검색어로 이어졌나)</summary>
+      <div id="dictRounds" style="margin-top:8px;"></div>
+    </details>
   </div>
 
   <!-- VOC 집계 -->
@@ -364,6 +393,72 @@ const SENT = {'긍정':['#dcfce7','#166534'],'부정':['#fee2e2','#991b1b'],'중
 function sentTag(s){ const c=SENT[s]; return c?`<span style="background:${c[0]};color:${c[1]};font-size:11px;padding:2px 7px;border-radius:8px;">${s}</span>`:'-'; }
 
 let LASTRESULTS = [];
+
+let deepTimer = null;
+const STAGE_KO = {seed:'초기 검색어 생성', search:'검색 중', evaluate:'소비자 글 선별', round_done:'라운드 완료', converged:'수렴(새 표현 거의 없음)', max_items:'최대치 도달', done:'완료'};
+
+async function deepListen() {
+  const appeal = document.getElementById('appeal').value.trim();
+  const competitors = document.getElementById('competitors').value.trim();
+  const product = document.getElementById('product').value.trim();
+  if (!appeal) { alert('소구점을 먼저 입력하세요.'); return; }
+  const rounds = document.getElementById('deepRounds').value;
+  const per_source = document.getElementById('deepPer').value;
+  const btn = document.getElementById('deepBtn');
+  btn.disabled = true; btn.textContent = '딥 리스닝 중...';
+  document.getElementById('deepProgress').textContent = '시작하는 중...';
+  try {
+    const res = await fetch('/deep_listen', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({appeal, competitors, product, rounds, per_source})
+    });
+    const d = await res.json();
+    if (d.error) { document.getElementById('deepProgress').textContent = '오류: ' + d.error; btn.disabled=false; btn.textContent='딥 리스닝 시작'; return; }
+    if (deepTimer) clearInterval(deepTimer);
+    deepTimer = setInterval(pollDeep, 2500);
+  } catch (e) {
+    document.getElementById('deepProgress').textContent = '오류: ' + e;
+    btn.disabled=false; btn.textContent='딥 리스닝 시작';
+  }
+}
+
+async function pollDeep() {
+  try {
+    const res = await fetch('/deep_status');
+    const d = await res.json();
+    const pg = document.getElementById('deepProgress');
+    if (d.last) {
+      const s = STAGE_KO[d.last.stage] || d.last.stage;
+      pg.textContent = `${s} · 라운드 ${d.last.round||0} · 모은 글 ${d.last.items||0} · 소비자 표현 ${d.last.phrases||0} · 검색어 ${d.last.queries||0}`;
+    }
+    if (!d.running) {
+      clearInterval(deepTimer); deepTimer = null;
+      const btn = document.getElementById('deepBtn'); btn.disabled=false; btn.textContent='딥 리스닝 시작';
+      if (d.error) { pg.textContent = '오류: ' + d.error; return; }
+      if (d.result) {
+        pg.textContent = `완료 — 진짜 소비자 글 ${d.result.count}건, 표현 ${d.result.phrases_all.length}개 수집`;
+        renderDict(d.result);
+        renderVoc(d.result.voc); renderTrend(d.result.trend); renderResults(d.result);
+        document.getElementById('dictCard').scrollIntoView({behavior:'smooth'});
+      }
+    }
+  } catch (e) { /* keep polling */ }
+}
+
+function renderDict(d) {
+  const c = document.getElementById('dictCard');
+  const phrases = d.phrases_all || [];
+  if (!phrases.length) { c.style.display='none'; return; }
+  c.style.display = 'block';
+  document.getElementById('dictMeta').textContent =
+    `${(d.rounds_log||[]).length}라운드 · 검색어 ${(d.queries_used||[]).length}개 · 진짜 소비자 표현 ${phrases.length}개`;
+  document.getElementById('dictPhrases').innerHTML =
+    phrases.map(p=>`<span class="ph">${esc(p)}</span>`).join('');
+  const rl = (d.rounds_log||[]).map(r =>
+    `<div style="margin:6px 0;font-size:12.5px;"><b>R${r.round}</b> — 검색어: ${(r.queries||[]).map(esc).join(' · ')} <span class="sub">(글 ${r.kept}, 새 표현 ${r.new_phrases})</span></div>`
+  ).join('');
+  document.getElementById('dictRounds').innerHTML = rl;
+}
 
 async function autoReviews() {
   const query = document.getElementById('autoQuery').value.trim();

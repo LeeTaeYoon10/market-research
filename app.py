@@ -5,6 +5,7 @@
 """
 import csv
 import io
+import threading
 from flask import Flask, render_template, request, Response, jsonify
 
 import collector
@@ -12,6 +13,9 @@ import summarizer
 import analytics
 import report
 import review_collector
+import listener
+
+DEEP = {"running": False, "log": [], "result": None, "error": None}
 
 app = Flask(__name__)
 LAST = {}  # 마지막 결과 보관 (CSV/리포트/노션용)
@@ -155,6 +159,55 @@ def reviews():
     return jsonify({"count": len(dedup), "added": len(evaluated), "results": dedup,
                     "overview": overview, "trend": trend, "voc": voc,
                     "competitors": competitors})
+
+
+def _run_deep(appeal, category, competitors, rounds, per_source):
+    try:
+        def cb(p):
+            DEEP["log"].append(p)
+        res = listener.deep_listen(appeal, category, competitors,
+                                   rounds=rounds, per_source=per_source, progress_cb=cb)
+        DEEP["result"] = res
+        LAST.update(product=category, appeal=appeal, results=res["items"], voc=res["voc"],
+                    overview=res["overview"], trend=res["trend"], competitors=competitors)
+    except Exception as e:
+        DEEP["error"] = str(e)
+    finally:
+        DEEP["running"] = False
+
+
+@app.route("/deep_listen", methods=["POST"])
+def deep_listen_start():
+    """딥 리스닝(멀티라운드 스노우볼)을 백그라운드로 시작."""
+    if DEEP["running"]:
+        return jsonify({"error": "이미 딥 리스닝이 진행 중입니다."}), 400
+    data = request.get_json()
+    appeal = (data.get("appeal") or LAST.get("appeal") or "").strip()
+    category = (data.get("product") or LAST.get("product") or "").strip()
+    competitors = LAST.get("competitors", []) or [c.strip() for c in (data.get("competitors") or "").split(",") if c.strip()]
+    rounds = max(1, min(int(data.get("rounds") or 4), 6))
+    per_source = max(3, min(int(data.get("per_source") or 6), 12))
+    if not appeal:
+        return jsonify({"error": "소구점을 입력하세요."}), 400
+    if not summarizer.ai_mode():
+        return jsonify({"error": "딥 리스닝은 AI(클로드 코드)가 필요합니다."}), 400
+    DEEP.update(running=True, log=[], result=None, error=None)
+    threading.Thread(target=_run_deep, args=(appeal, category, competitors, rounds, per_source), daemon=True).start()
+    return jsonify({"ok": True, "rounds": rounds})
+
+
+@app.route("/deep_status")
+def deep_status():
+    last = DEEP["log"][-1] if DEEP["log"] else None
+    out = {"running": DEEP["running"], "last": last, "error": DEEP["error"],
+           "log": DEEP["log"][-12:]}
+    if DEEP["result"] and not DEEP["running"]:
+        r = DEEP["result"]
+        out["result"] = {"count": len(r["items"]), "results": r["items"], "voc": r["voc"],
+                         "overview": r["overview"], "trend": r["trend"],
+                         "phrases_all": r["phrases_all"], "rounds_log": r["rounds_log"],
+                         "queries_used": r["queries_used"], "competitors": LAST.get("competitors", [])}
+    return jsonify(out)
 
 
 @app.route("/reviews_auto", methods=["POST"])
